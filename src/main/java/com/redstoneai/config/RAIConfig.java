@@ -35,8 +35,8 @@ public class RAIConfig {
                     .comment("Port for the WebSocket server that Python MCP clients connect to")
                     .defineInRange("port", 4711, 1024, 65535);
             webSocketBindAddress = builder
-                    .comment("Bind address for the WebSocket server. Use 127.0.0.1 for local-only, 0.0.0.0 for all interfaces (WSL requires 0.0.0.0)")
-                    .define("bindAddress", "0.0.0.0");
+                    .comment("Bind address for the WebSocket server. Default 127.0.0.1 (local-only). WSL users may need 0.0.0.0 but this exposes the port to the network — use with caution.")
+                    .define("bindAddress", "127.0.0.1");
             builder.pop();
 
             builder.push("workspace");

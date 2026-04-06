@@ -24,7 +24,7 @@ public class WorkspaceManager extends SavedData {
     private static final Map<ServerLevel, WorkspaceManager> INSTANCES = new ConcurrentHashMap<>();
 
     @Nullable
-    private transient ServerLevel ownerLevel;
+    private transient volatile ServerLevel ownerLevel;
     private final Map<UUID, Workspace> workspacesById = new LinkedHashMap<>();
     private final Map<String, Workspace> workspacesByName = new LinkedHashMap<>();
     private final Map<Long, List<Workspace>> workspacesByChunk = new HashMap<>();
@@ -199,13 +199,21 @@ public class WorkspaceManager extends SavedData {
     public static WorkspaceManager load(CompoundTag tag) {
         WorkspaceManager manager = new WorkspaceManager();
         ListTag list = tag.getList("workspaces", Tag.TAG_COMPOUND);
+        int skipped = 0;
         for (int i = 0; i < list.size(); i++) {
-            Workspace ws = Workspace.load(list.getCompound(i));
-            manager.workspacesById.put(ws.getId(), ws);
-            manager.workspacesByName.put(ws.getName(), ws);
-            manager.indexWorkspace(ws);
+            try {
+                Workspace ws = Workspace.load(list.getCompound(i));
+                manager.workspacesById.put(ws.getId(), ws);
+                manager.workspacesByName.put(ws.getName(), ws);
+                manager.indexWorkspace(ws);
+            } catch (Exception e) {
+                skipped++;
+                RedstoneAI.LOGGER.error("[RedstoneAI] Skipped corrupted workspace at index {}", i, e);
+            }
         }
-        RedstoneAI.LOGGER.info("[RedstoneAI] Loaded {} workspace(s)", manager.workspacesById.size());
+        RedstoneAI.LOGGER.info("[RedstoneAI] Loaded {} workspace(s){}",
+                manager.workspacesById.size(),
+                skipped > 0 ? " (" + skipped + " skipped due to corruption)" : "");
         return manager;
     }
 

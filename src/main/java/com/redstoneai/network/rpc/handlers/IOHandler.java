@@ -17,6 +17,7 @@ public class IOHandler {
 
     public JsonElement mark(JsonRpcRequest req, MinecraftServer server) throws JsonRpcException {
         Workspace ws = getWorkspace(req, server);
+        requireApiOwned(ws);
         if (!WorkspaceRules.canAiModify(ws)) {
             throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
                     "Workspace mode '" + ws.getProtectionMode().getSerializedName() + "' does not allow AI mutation");
@@ -52,6 +53,7 @@ public class IOHandler {
 
     public JsonElement unmark(JsonRpcRequest req, MinecraftServer server) throws JsonRpcException {
         Workspace ws = getWorkspace(req, server);
+        requireApiOwned(ws);
         if (!WorkspaceRules.canAiModify(ws)) {
             throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
                     "Workspace mode '" + ws.getProtectionMode().getSerializedName() + "' does not allow AI mutation");
@@ -118,5 +120,12 @@ public class IOHandler {
         Workspace ws = WorkspaceManager.get(level).getByName(name);
         if (ws == null) throw new JsonRpcException(-32602, "Workspace not found: " + name);
         return ws;
+    }
+
+    private void requireApiOwned(Workspace ws) throws JsonRpcException {
+        if (!WorkspaceRules.API_OWNER.equals(ws.getOwnerUUID())) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                    "RPC IO operations are only allowed on API-owned workspaces");
+        }
     }
 }

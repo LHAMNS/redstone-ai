@@ -1,0 +1,13 @@
+Security audit fixes: token rotation, ownership checks, explosion protection
+
+P0: Token regenerated on every server start with 600 file permissions.
+P0: Default WebSocket bind address changed to 127.0.0.1.
+P0: IOHandler/TestHandler now require API-owned workspace.
+P0: All /rai commands now check workspace ownership.
+P0: Explosion handler protects controller blocks outside workspace bounds.
+P1: Workspace.getIOMarkers() returns unmodifiable list.
+P1: WorkspaceManager.ownerLevel marked volatile.
+P1: NBT array length validated on workspace load with per-workspace error isolation.
+P2: Removed unused timeline variable in SimulationHandler.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>

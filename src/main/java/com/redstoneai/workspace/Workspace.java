@@ -11,6 +11,7 @@ import net.minecraft.world.phys.AABB;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -56,7 +57,7 @@ public class Workspace {
     public ProtectionMode getProtectionMode() { return protectionMode; }
     public EntityFilterMode getEntityFilterMode() { return entityFilterMode; }
     public boolean isFrozen() { return frozen; }
-    public List<IOMarker> getIOMarkers() { return ioMarkers; }
+    public List<IOMarker> getIOMarkers() { return Collections.unmodifiableList(ioMarkers); }
     public int getVirtualTick() { return virtualTick; }
 
     @Nullable
@@ -135,6 +136,11 @@ public class Workspace {
         ioMarkers.removeIf(m -> m.pos().equals(pos));
     }
 
+    /** Remove all IO markers that don't satisfy the predicate. */
+    public void retainIOMarkers(java.util.function.Predicate<IOMarker> keepIf) {
+        ioMarkers.removeIf(m -> !keepIf.test(m));
+    }
+
     @Nullable
     public IOMarker getIOMarker(BlockPos pos) {
         return ioMarkers.stream()
@@ -174,8 +180,10 @@ public class Workspace {
         UUID owner = tag.getUUID("owner");
         String name = tag.getString("name");
         int[] cpos = tag.getIntArray("controllerPos");
+        if (cpos.length < 3) throw new IllegalStateException("Corrupted workspace NBT: controllerPos array too short for '" + name + "'");
         BlockPos controllerPos = new BlockPos(cpos[0], cpos[1], cpos[2]);
         int[] b = tag.getIntArray("bounds");
+        if (b.length < 6) throw new IllegalStateException("Corrupted workspace NBT: bounds array too short for '" + name + "'");
         BoundingBox bounds = new BoundingBox(b[0], b[1], b[2], b[3], b[4], b[5]);
 
         Workspace ws = new Workspace(id, owner, name, controllerPos, bounds);

@@ -172,7 +172,7 @@ public class WorkspaceActionPacket {
         controller.setSize(sizeX, sizeY, sizeZ);
         manager.updateWorkspaceGeometry(workspace, newBounds, null);
         controller.setInitialSnapshot(InitialSnapshot.capture(level, newBounds));
-        workspace.getIOMarkers().removeIf(marker -> !workspace.contains(marker.pos()));
+        workspace.retainIOMarkers(marker -> workspace.contains(marker.pos()));
         TickController.invalidateRecording(level, workspace);
         controller.getOperationLog().logPlayer("config", "Workspace resized to " + sizeX + "x" + sizeY + "x" + sizeZ);
     }

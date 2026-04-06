@@ -90,7 +90,6 @@ public class SimulationHandler {
 
         int count = req.getIntParam("count", 1);
         if (!WorkspaceRules.isValidTickCount(count)) throw new JsonRpcException(-32602, "Count exceeds configured maximum");
-        RecordingTimeline timeline = ws.getTimeline();
 
         int advanced = TickController.replayThenStep(level, ws, count);
         JsonObject result = new JsonObject();

@@ -92,11 +92,22 @@ public final class WorkspaceProtectionHandler {
         if (!(event.getLevel() instanceof ServerLevel level)) return;
 
         WorkspaceManager manager = WorkspaceManager.get(level);
-        // Remove any affected blocks that are inside a non-collaborative workspace.
-        // Controller blocks are always preserved so explosions cannot bypass controller ownership.
+
+        // Collect all controller positions — these may be outside workspace bounds
+        // (relocated during range selection) so getWorkspaceAt() won't find them.
+        java.util.Set<net.minecraft.core.BlockPos> controllerPositions = new java.util.HashSet<>();
+        for (Workspace ws : manager.getAllWorkspacesSnapshot()) {
+            controllerPositions.add(ws.getControllerPos());
+        }
+
         event.getAffectedBlocks().removeIf(pos -> {
+            // Always protect controller blocks from explosions
+            if (controllerPositions.contains(pos)) {
+                return true;
+            }
+            // Protect non-modifiable workspace interiors
             Workspace ws = manager.getWorkspaceAt(pos);
-            return ws != null && (pos.equals(ws.getControllerPos()) || !ws.getProtectionMode().canPlayerModify());
+            return ws != null && !ws.getProtectionMode().canPlayerModify();
         });
     }
 }

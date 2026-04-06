@@ -6,11 +6,15 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
+import java.util.Set;
 
 /**
  * Manages the shared token used by the local MCP bridge to authenticate to the
- * in-process WebSocket RPC server.
+ * in-process WebSocket RPC server. Token is regenerated on every server start
+ * to limit the window of a leaked token.
  */
 public final class RpcAuthManager {
     public static final String AUTH_HEADER = "Authorization";
@@ -21,21 +25,17 @@ public final class RpcAuthManager {
 
     private RpcAuthManager() {}
 
+    /**
+     * Generate a fresh token on every server start. Old tokens are invalidated.
+     */
     public static synchronized String getOrCreateToken() {
-        if (cachedToken != null) {
-            return cachedToken;
-        }
-
+        // Always regenerate on each server start for security
+        cachedToken = generateToken();
         Path tokenPath = getTokenPath();
         try {
             Files.createDirectories(tokenPath.getParent());
-            if (Files.exists(tokenPath)) {
-                cachedToken = Files.readString(tokenPath, StandardCharsets.UTF_8).trim();
-            }
-            if (cachedToken == null || cachedToken.isBlank()) {
-                cachedToken = generateToken();
-                Files.writeString(tokenPath, cachedToken + System.lineSeparator(), StandardCharsets.UTF_8);
-            }
+            Files.writeString(tokenPath, cachedToken + System.lineSeparator(), StandardCharsets.UTF_8);
+            trySetOwnerOnlyPermissions(tokenPath);
             return cachedToken;
         } catch (IOException e) {
             throw new IllegalStateException("Failed to initialize RPC auth token at " + tokenPath, e);
@@ -48,6 +48,19 @@ public final class RpcAuthManager {
 
     public static String toBearerToken(String token) {
         return "Bearer " + token;
+    }
+
+    /**
+     * Attempt to restrict the token file to owner-only read/write (chmod 600).
+     * Silently ignored on Windows where POSIX permissions are not supported.
+     */
+    private static void trySetOwnerOnlyPermissions(Path path) {
+        try {
+            Set<PosixFilePermission> ownerOnly = PosixFilePermissions.fromString("rw-------");
+            Files.setPosixFilePermissions(path, ownerOnly);
+        } catch (UnsupportedOperationException | IOException ignored) {
+            // Windows or other non-POSIX FS — best effort
+        }
     }
 
     private static String generateToken() {

@@ -5,6 +5,7 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import net.minecraft.server.level.ServerPlayer;
 import com.redstoneai.workspace.InitialSnapshot;
 import com.redstoneai.config.RAIConfig;
 import com.redstoneai.mcr.MCRBlock;
@@ -227,6 +228,8 @@ public final class RAICommands {
             return 0;
         }
 
+        if (!checkManagePermission(ctx, ws)) return 0;
+
         // Discard frozen state without replaying queued ticks to the world
         if (ws.isFrozen()) {
             TickController.discardFrozenState(level, ws);
@@ -305,6 +308,7 @@ public final class RAICommands {
         Workspace ws = WorkspaceManager.get(level).getByName(name);
         if (ws == null) { ctx.getSource().sendFailure(Component.literal("Workspace '" + name + "' not found")); return 0; }
         if (ws.isFrozen()) { ctx.getSource().sendFailure(Component.literal("Workspace '" + name + "' is already frozen")); return 0; }
+        if (!checkManagePermission(ctx, ws)) return 0;
 
         TickController.freeze(level, ws);
         ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] Workspace '" + name + "' frozen").withStyle(ChatFormatting.AQUA), true);
@@ -317,6 +321,7 @@ public final class RAICommands {
         Workspace ws = WorkspaceManager.get(level).getByName(name);
         if (ws == null) { ctx.getSource().sendFailure(Component.literal("Workspace '" + name + "' not found")); return 0; }
         if (!ws.isFrozen()) { ctx.getSource().sendFailure(Component.literal("Workspace '" + name + "' is not frozen")); return 0; }
+        if (!checkManagePermission(ctx, ws)) return 0;
 
         TickController.unfreeze(level, ws);
         ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] Workspace '" + name + "' unfrozen").withStyle(ChatFormatting.GREEN), true);
@@ -330,6 +335,7 @@ public final class RAICommands {
         if (ws == null) { ctx.getSource().sendFailure(Component.literal("Workspace '" + name + "' not found")); return 0; }
         if (!ws.isFrozen()) { ctx.getSource().sendFailure(Component.literal("Must be frozen to step")); return 0; }
         if (!WorkspaceRules.isValidTickCount(count)) { ctx.getSource().sendFailure(Component.literal("Step count exceeds configured maximum")); return 0; }
+        if (!checkManagePermission(ctx, ws)) return 0;
 
         int stepped = TickController.step(level, ws, count);
         ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] Stepped " + stepped + " tick(s) (vtick: " + ws.getVirtualTick() + ")").withStyle(ChatFormatting.AQUA), false);
@@ -552,6 +558,23 @@ public final class RAICommands {
     }
 
     // ==================== Utility ====================
+
+    /**
+     * Check if the command source has permission to manage the given workspace.
+     * Console always has permission; players need to be owner or op level 2.
+     */
+    private static boolean checkManagePermission(CommandContext<CommandSourceStack> ctx, Workspace ws) {
+        try {
+            ServerPlayer player = ctx.getSource().getPlayerOrException();
+            if (!WorkspaceRules.canPlayerManage(player, ws)) {
+                ctx.getSource().sendFailure(Component.literal("You don't have permission to manage workspace '" + ws.getName() + "'"));
+                return false;
+            }
+        } catch (CommandSyntaxException e) {
+            // Console — always allowed
+        }
+        return true;
+    }
 
     private static BlockPos findNearestController(ServerLevel level, BlockPos center) {
         BlockPos nearest = null;

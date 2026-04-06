@@ -147,7 +147,7 @@ public final class SelectionManager {
         targetController.setInitialSnapshot(InitialSnapshot.capture(level, bounds));
         if (workspace != null) {
             Workspace selectedWorkspace = workspace;
-            selectedWorkspace.getIOMarkers().removeIf(marker -> !selectedWorkspace.contains(marker.pos()));
+            selectedWorkspace.retainIOMarkers(marker -> selectedWorkspace.contains(marker.pos()));
             TickController.invalidateRecording(level, selectedWorkspace);
         }
 
