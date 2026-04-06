@@ -81,11 +81,14 @@ public final class MCRParser {
                             cx = Integer.parseInt(coords[0]);
                             cy = Integer.parseInt(coords[1]);
                             cz = Integer.parseInt(coords[2]);
-                            rowStartX = cx;
-                            layerStartZ = cz;
                         } catch (NumberFormatException e) {
                             throw new MCRParseException("Invalid @origin coordinates: " + tokens[i]);
                         }
+                        if (Math.abs(cx) > 256 || Math.abs(cy) > 256 || Math.abs(cz) > 256) {
+                            throw new MCRParseException("@origin coordinates out of range (max +/-256): " + tokens[i]);
+                        }
+                        rowStartX = cx;
+                        layerStartZ = cz;
                     }
                     case "row" -> {
                         cz++;

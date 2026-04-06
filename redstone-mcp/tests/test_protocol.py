@@ -97,7 +97,7 @@ def test_recv_response_rejects_malformed_json():
     async def run() -> None:
         client = protocol.RedstoneProtocol(timeout=1.0)
         client._ws = DummyWS()  # type: ignore[assignment]
-        with pytest.raises(protocol.ConnectionError, match="Malformed JSON-RPC response"):
+        with pytest.raises(protocol.RedstoneConnectionError, match="Malformed JSON-RPC response"):
             await client._recv_response_locked("request-1")
 
     asyncio.run(run())

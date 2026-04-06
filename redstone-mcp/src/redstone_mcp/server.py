@@ -8,7 +8,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from .density import format_level1, format_level2, format_level3
-from .errors import ConnectionError, RpcError
+from .errors import RedstoneConnectionError, RpcError
 from .mcr import REFERENCE_CARD, validate
 from .protocol import RedstoneProtocol
 from .system_prompt import SYSTEM_PROMPT

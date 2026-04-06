@@ -43,18 +43,12 @@ public final class TickController {
     private static final Field SERVER_LEVEL_BLOCK_EVENTS_FIELD;
 
     static {
-        try {
-            LEVEL_TICKS_ALL_CONTAINERS_FIELD = LevelTicks.class.getDeclaredField("allContainers");
-            LEVEL_TICKS_ALL_CONTAINERS_FIELD.setAccessible(true);
-            LEVEL_TICKS_TO_RUN_FIELD = LevelTicks.class.getDeclaredField("toRunThisTick");
-            LEVEL_TICKS_TO_RUN_FIELD.setAccessible(true);
-            LEVEL_TICKS_ALREADY_RUN_FIELD = LevelTicks.class.getDeclaredField("alreadyRunThisTick");
-            LEVEL_TICKS_ALREADY_RUN_FIELD.setAccessible(true);
-            SERVER_LEVEL_BLOCK_EVENTS_FIELD = ServerLevel.class.getDeclaredField("blockEvents");
-            SERVER_LEVEL_BLOCK_EVENTS_FIELD.setAccessible(true);
-        } catch (ReflectiveOperationException e) {
-            throw new ExceptionInInitializerError(e);
-        }
+        // Use ObfuscationReflectionHelper with SRG names — Mojang-mapped names
+        // only work in dev; production JARs use SRG (f_xxxxx_) names.
+        LEVEL_TICKS_ALL_CONTAINERS_FIELD = net.minecraftforge.fml.util.ObfuscationReflectionHelper.findField(LevelTicks.class, "f_193800_");
+        LEVEL_TICKS_TO_RUN_FIELD = net.minecraftforge.fml.util.ObfuscationReflectionHelper.findField(LevelTicks.class, "f_193802_");
+        LEVEL_TICKS_ALREADY_RUN_FIELD = net.minecraftforge.fml.util.ObfuscationReflectionHelper.findField(LevelTicks.class, "f_193803_");
+        SERVER_LEVEL_BLOCK_EVENTS_FIELD = net.minecraftforge.fml.util.ObfuscationReflectionHelper.findField(ServerLevel.class, "f_8549_");
     }
 
     private TickController() {}

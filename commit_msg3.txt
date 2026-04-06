@@ -1,0 +1,14 @@
+Fix reflection SRG names, bind address, Python error shadowing, dead code
+
+- TickController: Use ObfuscationReflectionHelper with SRG field names
+  (f_193800_, f_193802_, f_193803_, f_8549_) instead of Mojang-mapped
+  names that break after reobfuscation
+- WebSocketServer: Allow 0.0.0.0 and :: through resolveBindHost for WSL
+- Python errors.py: Rename ConnectionError to RedstoneConnectionError
+  to avoid shadowing Python builtin
+- RAICommands: Remove dead code comment after return in fastForward
+- MCRParser: Add +/-256 range limit on @origin coordinates
+- WorkspaceProtectionHandler: Protect controller blocks from explosions
+  even when outside workspace bounds
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>

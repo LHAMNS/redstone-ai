@@ -382,13 +382,9 @@ public final class RAICommands {
             return 0;
         }
 
-        {
-            int advanced = TickController.replayThenStep(level, ws, count);
-            ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] Advanced " + advanced + " tick(s) (vtick: " + ws.getVirtualTick() + ")").withStyle(ChatFormatting.GOLD), false);
-            return advanced;
-        }
-            // At head of timeline — step instead
-
+        int advanced = TickController.replayThenStep(level, ws, count);
+        ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] Advanced " + advanced + " tick(s) (vtick: " + ws.getVirtualTick() + ")").withStyle(ChatFormatting.GOLD), false);
+        return advanced;
     }
 
     // ==================== IO Markers ====================

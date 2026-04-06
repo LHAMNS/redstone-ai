@@ -5,7 +5,7 @@ class RedstoneError(Exception):
     """Base error for all RedstoneAI operations."""
 
 
-class ConnectionError(RedstoneError):
+class RedstoneConnectionError(RedstoneError):
     """WebSocket connection to the Forge mod failed or was lost."""
 
 

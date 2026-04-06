@@ -98,16 +98,17 @@ public class WebSocketServer {
         if (bindHost == null || bindHost.isEmpty()) {
             return "127.0.0.1";
         }
-
+        // Allow explicit wildcard bind (needed for WSL)
+        if ("0.0.0.0".equals(bindHost) || "::".equals(bindHost)) {
+            return bindHost;
+        }
         try {
             InetAddress address = InetAddress.getByName(bindHost);
             if (address.isLoopbackAddress()) {
                 return bindHost;
             }
         } catch (UnknownHostException ignored) {
-            // Fall through to the safe local-only default below.
         }
-
         return "127.0.0.1";
     }
 }

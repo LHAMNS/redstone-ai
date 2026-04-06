@@ -16,7 +16,7 @@ import websockets
 from websockets.asyncio.client import connect
 from websockets.protocol import State
 
-from .errors import ConnectionError, RpcError
+from .errors import RedstoneConnectionError, RpcError
 
 AUTH_ENV_VAR = "REDSTONE_AI_AUTH_TOKEN"
 AUTH_FILE_ENV_VAR = "REDSTONE_AI_AUTH_TOKEN_FILE"
@@ -174,12 +174,12 @@ class RedstoneProtocol:
                 response = await self._recv_response_locked(request_id)
             except asyncio.TimeoutError as exc:
                 await self._disconnect_locked()
-                raise ConnectionError("RPC call timed out") from exc
+                raise RedstoneConnectionError("RPC call timed out") from exc
             except RpcError:
                 raise
             except Exception as exc:
                 await self._disconnect_locked()
-                raise ConnectionError(f"WebSocket error: {exc}") from exc
+                raise RedstoneConnectionError(f"WebSocket error: {exc}") from exc
 
             if "error" in response:
                 err = response["error"]
@@ -202,7 +202,7 @@ class RedstoneProtocol:
 
         token = load_auth_token()
         if not token:
-            raise ConnectionError(
+            raise RedstoneConnectionError(
                 "Missing RedstoneAI auth token. Set REDSTONE_AI_AUTH_TOKEN or provide the token file."
             )
 
@@ -221,7 +221,7 @@ class RedstoneProtocol:
                 self._ws = None
                 errors.append(f"{uri}: {exc}")
 
-        raise ConnectionError("Failed to connect to RedstoneAI server: " + " | ".join(errors))
+        raise RedstoneConnectionError("Failed to connect to RedstoneAI server: " + " | ".join(errors))
 
     async def _disconnect_locked(self) -> None:
         if self._ws is not None:
@@ -239,19 +239,19 @@ class RedstoneProtocol:
             try:
                 response = json.loads(response_text)
             except (TypeError, ValueError) as exc:
-                raise ConnectionError("Malformed JSON-RPC response") from exc
+                raise RedstoneConnectionError("Malformed JSON-RPC response") from exc
 
             if not isinstance(response, dict):
-                raise ConnectionError("Malformed JSON-RPC response")
+                raise RedstoneConnectionError("Malformed JSON-RPC response")
             if response.get("jsonrpc") != "2.0":
-                raise ConnectionError("Invalid JSON-RPC version in response")
+                raise RedstoneConnectionError("Invalid JSON-RPC version in response")
 
             response_id = response.get("id")
             if response_id != request_id:
                 if "result" in response or "error" in response or "method" in response:
                     continue
-                raise ConnectionError("Malformed JSON-RPC response")
+                raise RedstoneConnectionError("Malformed JSON-RPC response")
 
             if "result" not in response and "error" not in response:
-                raise ConnectionError("Malformed JSON-RPC response")
+                raise RedstoneConnectionError("Malformed JSON-RPC response")
             return response
