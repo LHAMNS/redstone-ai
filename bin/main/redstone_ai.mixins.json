@@ -1,0 +1,24 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.redstoneai.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "redstone_ai.refmap.json",
+  "mixins": [
+    "LevelAccessor",
+    "LevelBlockEntityTickMixin",
+    "LevelNeighborUpdateMixin",
+    "LevelSetBlockMixin",
+    "LevelTicksScheduleMixin",
+    "PistonBoundaryMixin",
+    "ServerLevelTickAccessAccessor",
+    "ServerLevelBlockEventMixin",
+    "ServerLevelEntityTickMixin",
+    "ServerLevelNeighborUpdateMixin",
+    "ServerLevelTickMixin"
+  ],
+  "client": [],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

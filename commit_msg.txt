@@ -1,0 +1,7 @@
+Initial commit: RedstoneAI mod + Python MCP server
+
+Forge 1.20.1 mod with AI workspace block (Redstone Nexus), tick-level
+time control (freeze/step/rewind), MCR compact format, WebSocket JSON-RPC
+API, and Python MCP server bridging Claude/ChatGPT to Minecraft.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>

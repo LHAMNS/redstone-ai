@@ -1,0 +1,24 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="LGPL-3.0-or-later"
+
+[[mods]]
+modId="redstone_ai"
+version="${file.jarVersion}"
+displayName="RedstoneAI"
+authors="RedstoneAI"
+description='''AI-powered redstone circuit building and testing platform. Provides tick-level time control, state recording/rewind, and MCP server bridge for Claude/ChatGPT integration.'''
+
+[[dependencies.redstone_ai]]
+    modId="forge"
+    mandatory=true
+    versionRange="[47,)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.redstone_ai]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.20.1,1.21)"
+    ordering="NONE"
+    side="BOTH"

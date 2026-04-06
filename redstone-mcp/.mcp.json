@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "redstone-ai": {
+      "command": "uv",
+      "args": ["run", "--directory", "C:\\dev\\redstone-mcp", "redstone-mcp"]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "redstone-mcp"
+version = "0.1.0"
+description = "MCP server bridging AI to Minecraft redstone circuit building via RedstoneAI mod"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=2.0.0",
+    "websockets>=13.0,<17.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+redstone-mcp = "redstone_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/redstone_mcp"]

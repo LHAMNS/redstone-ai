@@ -1,0 +1,89 @@
+plugins {
+    id 'net.minecraftforge.gradle' version '[6.0.16,6.2)'
+    id 'org.spongepowered.mixin' version '0.7-SNAPSHOT'
+}
+
+version = mod_version
+group = 'com.redstoneai'
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(17)
+}
+
+minecraft {
+    mappings channel: 'official', version: minecraft_version
+    copyIdeResources = true
+
+    runs {
+        configureEach {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
+            mods {
+                redstone_ai {
+                    source sourceSets.main
+                }
+            }
+        }
+
+        client {}
+
+        server {
+            args '--nogui'
+        }
+
+        gameTestServer {
+            workingDirectory project.file('run/gametest')
+            property 'forge.enabledGameTestNamespaces', 'redstone_ai'
+            args '--nogui'
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+
+    // Mixin extras
+    implementation "io.github.llamalad7:mixinextras-common:0.4.1"
+    implementation(fg.deobf("io.github.llamalad7:mixinextras-forge:0.4.1"))
+
+    // Netty HTTP/WebSocket codecs (NOT bundled with Forge - added without transitives to avoid duplication)
+    minecraftLibrary('io.netty:netty-codec-http:4.1.82.Final') { transitive = false }
+    jarJar(group: 'io.netty', name: 'netty-codec-http', version: '[4.1.82.Final,4.2)') {
+        jarJar.pin(it, '4.1.82.Final')
+    }
+
+    // Mixin processor + MixinExtras AP for @WrapOperation refmap entries
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+    annotationProcessor "io.github.llamalad7:mixinextras-common:0.4.1"
+}
+
+mixin {
+    add sourceSets.main, "redstone_ai.refmap.json"
+    config "redstone_ai.mixins.json"
+}
+
+jar {
+    manifest {
+        attributes([
+                "Specification-Title"     : "RedstoneAI",
+                "Specification-Vendor"    : "RedstoneAI",
+                "Specification-Version"   : "1",
+                "Implementation-Title"    : project.name,
+                "Implementation-Version"  : project.jar.archiveVersion,
+                "Implementation-Vendor"   : "RedstoneAI",
+                "MixinConfigs"            : "redstone_ai.mixins.json"
+        ])
+    }
+    finalizedBy 'reobfJar'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}

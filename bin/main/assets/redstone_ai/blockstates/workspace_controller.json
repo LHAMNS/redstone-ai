@@ -1,0 +1,5 @@
+{
+  "variants": {
+    "": { "model": "redstone_ai:block/workspace_controller" }
+  }
+}

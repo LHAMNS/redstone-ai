@@ -1,0 +1,33 @@
+# Gradle
+.gradle/
+build/
+run/
+logs/
+out/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Forge
+*.log
+crash-reports/
+
+# Python MCP
+redstone-mcp/.venv/
+redstone-mcp/.pytest_cache/
+redstone-mcp/__pycache__/
+redstone-mcp/src/**/__pycache__/
+redstone-mcp/tests/__pycache__/
+redstone-mcp/*.egg-info/
+
+# Auth tokens
+**/redstone_ai_mcp_token.txt
