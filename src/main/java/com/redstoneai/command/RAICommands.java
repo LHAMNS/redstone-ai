@@ -424,9 +424,14 @@ public final class RAICommands {
         Workspace ws = WorkspaceManager.get(level).getByName(wsName);
         if (ws == null) { ctx.getSource().sendFailure(Component.literal("Workspace '" + wsName + "' not found")); return 0; }
 
-        BlockPos pos = new BlockPos(x, y, z);
-        if (!ws.contains(pos)) {
-            ctx.getSource().sendFailure(Component.literal("Position is outside workspace bounds"));
+        // Coordinates are relative to workspace origin (consistent with RPC io.mark)
+        BlockPos worldPos = ws.toWorldPos(x, y, z);
+        if (!ws.contains(worldPos)) {
+            ctx.getSource().sendFailure(Component.literal("Position (" + x + "," + y + "," + z + ") is outside workspace bounds"));
+            return 0;
+        }
+        if (ws.isControllerPos(worldPos)) {
+            ctx.getSource().sendFailure(Component.literal("Cannot mark the controller block position"));
             return 0;
         }
 
@@ -435,10 +440,10 @@ public final class RAICommands {
             ctx.getSource().sendFailure(Component.literal("Invalid IO role"));
             return 0;
         }
-        ws.addIOMarker(new IOMarker(pos, role, label));
+        ws.addIOMarker(new IOMarker(worldPos, role, label));
         WorkspaceManager.get(level).setDirty();
 
-        ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] Marked " + role.getSerializedName() + " '" + label + "' at " + pos.toShortString()).withStyle(ChatFormatting.GREEN), false);
+        ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] Marked " + role.getSerializedName() + " '" + label + "' at relative (" + x + "," + y + "," + z + ")").withStyle(ChatFormatting.GREEN), false);
         return 1;
     }
 
@@ -452,11 +457,12 @@ public final class RAICommands {
         Workspace ws = WorkspaceManager.get(level).getByName(wsName);
         if (ws == null) { ctx.getSource().sendFailure(Component.literal("Workspace '" + wsName + "' not found")); return 0; }
 
-        BlockPos pos = new BlockPos(x, y, z);
-        ws.removeIOMarker(pos);
+        // Coordinates are relative to workspace origin (consistent with RPC io.unmark)
+        BlockPos worldPos = ws.toWorldPos(x, y, z);
+        ws.removeIOMarker(worldPos);
         WorkspaceManager.get(level).setDirty();
 
-        ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] Unmarked " + pos.toShortString()).withStyle(ChatFormatting.YELLOW), false);
+        ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] Unmarked relative (" + x + "," + y + "," + z + ")").withStyle(ChatFormatting.YELLOW), false);
         return 1;
     }
 

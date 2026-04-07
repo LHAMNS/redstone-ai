@@ -42,8 +42,11 @@ def _require_workspace_size(size_x: int, size_y: int, size_z: int) -> None:
 
 
 def _require_nonnegative_relative_coords(x: int, y: int, z: int) -> None:
-    if min(x, y, z) < 0 or max(x, y, z) > _MAX_WORKSPACE_SIZE:
-        raise ValueError(f"relative coordinates must be between 0 and {_MAX_WORKSPACE_SIZE}")
+    """Quick sanity check — the real validation happens in _require_workspace_relative_coords
+    which fetches the actual workspace size from the server."""
+    if min(x, y, z) < 0:
+        raise ValueError("relative coordinates must be >= 0")
+    # Upper bound is checked against actual workspace size by _require_workspace_relative_coords
 
 
 def _require_tick_count(count: int) -> None:

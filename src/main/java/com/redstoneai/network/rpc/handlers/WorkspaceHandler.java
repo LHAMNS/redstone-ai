@@ -792,11 +792,26 @@ public class WorkspaceHandler {
         for (int attempt = 0; attempt < 128; attempt++) {
             BlockPos controllerPos = new BlockPos(1000 + attempt * spacing, 64 + sizeY, 1000);
             BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, sizeX, sizeY, sizeZ);
-            if (manager.checkOverlap(bounds) == null) {
-                return controllerPos;
-            }
+            if (manager.checkOverlap(bounds) != null) continue;
+            // Check the target area is mostly empty to avoid overwriting player builds
+            if (hasSignificantBlocks(level, bounds)) continue;
+            return controllerPos;
         }
         throw new JsonRpcException(JsonRpcException.INTERNAL_ERROR, "Unable to allocate workspace location");
+    }
+
+    /** Returns true if more than 10% of the area has non-air blocks. */
+    private static boolean hasSignificantBlocks(ServerLevel level, net.minecraft.world.level.levelgen.structure.BoundingBox bounds) {
+        int total = 0;
+        int nonAir = 0;
+        for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
+            for (int z = bounds.minZ(); z <= bounds.maxZ(); z++) {
+                // Only sample the bottom layer for speed
+                if (!level.getBlockState(new BlockPos(x, bounds.minY(), z)).isAir()) nonAir++;
+                total++;
+            }
+        }
+        return total > 0 && nonAir > total / 10;
     }
 
     private static JsonArray toIntArray(BlockPos pos) {

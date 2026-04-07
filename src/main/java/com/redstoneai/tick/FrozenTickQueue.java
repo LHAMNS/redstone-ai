@@ -117,6 +117,11 @@ public class FrozenTickQueue {
         neighborUpdates.add(new QueuedNeighborUpdate(pos.immutable(), state, sourceBlock, sourcePos.immutable(), movedByPiston));
     }
 
+    /**
+     * Decrement remaining delay for all queued block ticks and return those that are due.
+     * IMPORTANT: Each call represents one virtual tick advance. Do NOT call for diagnostics
+     * without advancing virtual time, as delays are consumed on every call.
+     */
     public List<QueuedBlockTick> pollDueBlockTicks() {
         List<DelayedBlockTick> due = new ArrayList<>();
         Iterator<Map.Entry<ScheduledTickKey, DelayedBlockTick>> iterator = blockTicks.entrySet().iterator();

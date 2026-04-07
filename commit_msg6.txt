@@ -1,0 +1,12 @@
+Fix all remaining Ultraplan audit issues
+
+- RAICommands markIO/unmarkIO: use relative coordinates (ws.toWorldPos)
+  matching RPC io.mark convention, add controller position guard
+- Python server.py: remove hardcoded upper bound in coordinate pre-check
+  since real validation uses actual workspace size from server
+- WorkspaceHandler: findAvailableControllerPos now checks for existing
+  blocks to avoid overwriting player builds
+- FrozenTickQueue: add documentation warning that pollDue* methods
+  consume delay on every call (tied to virtual tick advance)
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
