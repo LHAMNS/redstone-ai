@@ -1,0 +1,21 @@
+Add analysis/inspect modules, expand MCP tools and tests to 65
+
+Python MCP server:
+- New analysis.py: workspace analysis tools (component graph, signal
+  graph, trace path, watch nodes, stability, mechanisms, impact)
+- New inspect.py: workspace inspection views (summary, components,
+  layers, raw, orthographic, neighborhood, baseline diff)
+- server.py: new MCP tools (probe, inspect, orthographic, neighborhood,
+  component_graph, signal_graph, trace_path, watch_nodes, stability,
+  mechanisms, baseline_diff, impact, block_entity, entity, settle)
+- protocol.py: improved token discovery with multi-file candidate
+  support, retry on auth rejection
+- system_prompt.py: comprehensive coordinate contract and tool docs
+
+Tests: 27 -> 65 passed
+- test_server_tools.py: 28 new tests covering all new MCP tools
+- test_analysis.py: analysis module tests
+- test_inspect.py: inspection module tests
+- test_protocol.py: token retry, notification skip, multi-candidate
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>

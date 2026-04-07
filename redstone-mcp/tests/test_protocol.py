@@ -1,4 +1,5 @@
 import asyncio
+import os
 from importlib import util
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,8 +39,8 @@ def test_explicit_missing_token_path_is_authoritative(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(protocol.AUTH_FILE_ENV_VAR, str(tmp_path / "missing" / "token.txt"))
 
-    token_file = protocol._discover_token_file()
-    assert token_file is None
+    token_files = protocol._discover_token_files()
+    assert token_files == []
 
 
 def test_wsl_gateway_host_is_discovered_from_default_route(monkeypatch):
@@ -62,6 +63,58 @@ def test_discover_host_candidates_does_not_probe_wsl_on_posix(monkeypatch):
     monkeypatch.setattr(protocol, "_discover_wsl_gateway_host", should_not_run)
 
     assert protocol.discover_host_candidates("localhost") == ["localhost"]
+
+
+def test_discover_token_files_prefers_newest(monkeypatch, tmp_path):
+    repo_root = tmp_path / "redstone-ai"
+    run_config = repo_root / "run" / "config"
+    gametest_config = repo_root / "run" / "gametest" / "config"
+    run_config.mkdir(parents=True)
+    gametest_config.mkdir(parents=True)
+    older = run_config / protocol.DEFAULT_TOKEN_FILE_NAME
+    newer = gametest_config / protocol.DEFAULT_TOKEN_FILE_NAME
+    older.write_text("old", encoding="utf-8")
+    newer.write_text("new", encoding="utf-8")
+    os.utime(older, (1_700_000_000, 1_700_000_000))
+    os.utime(newer, (1_700_000_100, 1_700_000_100))
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(protocol, "__file__", str((tmp_path / "redstone-mcp" / "src" / "redstone_mcp" / "protocol.py")))
+
+    discovered = protocol._discover_token_files()
+    assert discovered[0] == newer.resolve()
+    assert older.resolve() in discovered
+
+
+def test_load_auth_token_candidates_uses_env_token(monkeypatch):
+    monkeypatch.setenv(protocol.AUTH_ENV_VAR, " secret ")
+    candidates = protocol.load_auth_token_candidates()
+    assert candidates == [("env:REDSTONE_AI_AUTH_TOKEN", "secret")]
+
+
+def test_connect_locked_retries_next_token_candidate(monkeypatch):
+    attempts = []
+
+    class DummyConnection:
+        state = protocol.State.OPEN
+
+    async def fake_connect(uri, additional_headers=None, open_timeout=None, max_size=None):
+        attempts.append((uri, additional_headers["Authorization"]))
+        if additional_headers["Authorization"] == "Bearer stale":
+            raise Exception("server rejected WebSocket connection: HTTP 401")
+        return DummyConnection()
+
+    monkeypatch.setattr(protocol, "load_auth_token_candidates", lambda: [("old", "stale"), ("new", "fresh")])
+    monkeypatch.setattr(protocol, "discover_host_candidates", lambda host: ["127.0.0.1"])
+    monkeypatch.setattr(protocol, "connect", fake_connect)
+
+    client = protocol.RedstoneProtocol(timeout=1.0)
+    asyncio.run(client.connect())
+
+    assert attempts == [
+        ("ws://127.0.0.1:4711/", "Bearer stale"),
+        ("ws://127.0.0.1:4711/", "Bearer fresh"),
+    ]
 
 
 def test_recv_response_skips_notifications():
@@ -97,7 +150,7 @@ def test_recv_response_rejects_malformed_json():
     async def run() -> None:
         client = protocol.RedstoneProtocol(timeout=1.0)
         client._ws = DummyWS()  # type: ignore[assignment]
-        with pytest.raises(protocol.RedstoneConnectionError, match="Malformed JSON-RPC response"):
+        with pytest.raises(protocol.ConnectionError, match="Malformed JSON-RPC response"):
             await client._recv_response_locked("request-1")
 
     asyncio.run(run())

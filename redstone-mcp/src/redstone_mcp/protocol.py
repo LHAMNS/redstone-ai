@@ -16,7 +16,7 @@ import websockets
 from websockets.asyncio.client import connect
 from websockets.protocol import State
 
-from .errors import RedstoneConnectionError, RpcError
+from .errors import ConnectionError, RpcError
 
 AUTH_ENV_VAR = "REDSTONE_AI_AUTH_TOKEN"
 AUTH_FILE_ENV_VAR = "REDSTONE_AI_AUTH_TOKEN_FILE"
@@ -25,24 +25,38 @@ HOST_ENV_VAR = "REDSTONE_AI_HOST"
 WINDOWS_DRIVE_PATH_RE = re.compile(r"^(?P<drive>[A-Za-z]):[\\/](?P<rest>.*)$")
 
 
-def _discover_token_file() -> Optional[Path]:
+def _discover_token_files() -> list[Path]:
     explicit = os.getenv(AUTH_FILE_ENV_VAR)
     if explicit:
         explicit_path = _normalize_explicit_token_path(explicit)
         if explicit_path is None or not explicit_path.exists():
-            return None
-        return explicit_path
+            return []
+        return [explicit_path]
 
     candidates = [
         Path.cwd() / "config" / DEFAULT_TOKEN_FILE_NAME,
         Path.cwd() / "run" / "config" / DEFAULT_TOKEN_FILE_NAME,
         Path(__file__).resolve().parents[3] / "redstone-ai" / "run" / "config" / DEFAULT_TOKEN_FILE_NAME,
+        Path(__file__).resolve().parents[3] / "redstone-ai" / "run" / "gametest" / "config" / DEFAULT_TOKEN_FILE_NAME,
         Path(__file__).resolve().parents[2] / "config" / DEFAULT_TOKEN_FILE_NAME,
     ]
+    redstone_ai_repo = Path(__file__).resolve().parents[3] / "redstone-ai" / "run"
+    if redstone_ai_repo.exists():
+        candidates.extend(redstone_ai_repo.rglob(DEFAULT_TOKEN_FILE_NAME))
+
+    unique: dict[Path, float] = {}
     for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
         if candidate.exists():
-            return candidate
-    return None
+            try:
+                unique[resolved] = max(unique.get(resolved, 0.0), candidate.stat().st_mtime)
+            except OSError:
+                unique.setdefault(resolved, 0.0)
+
+    return sorted(unique, key=lambda path: (-unique[path], str(path)))
 
 
 def _is_ipv4_address(candidate: str) -> bool:
@@ -110,15 +124,21 @@ def _normalize_explicit_token_path(raw_path: str) -> Optional[Path]:
     return path
 
 
-def load_auth_token() -> Optional[str]:
+def load_auth_token_candidates() -> list[tuple[str, str]]:
     token = os.getenv(AUTH_ENV_VAR)
     if token:
-        return token.strip()
+        stripped = token.strip()
+        return [("env:REDSTONE_AI_AUTH_TOKEN", stripped)] if stripped else []
 
-    token_file = _discover_token_file()
-    if token_file is None:
-        return None
-    return token_file.read_text(encoding="utf-8").strip() or None
+    candidates: list[tuple[str, str]] = []
+    for token_file in _discover_token_files():
+        try:
+            token_value = token_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if token_value:
+            candidates.append((str(token_file), token_value))
+    return candidates
 
 
 def discover_host_candidates(host: str) -> list[str]:
@@ -174,12 +194,12 @@ class RedstoneProtocol:
                 response = await self._recv_response_locked(request_id)
             except asyncio.TimeoutError as exc:
                 await self._disconnect_locked()
-                raise RedstoneConnectionError("RPC call timed out") from exc
+                raise ConnectionError("RPC call timed out") from exc
             except RpcError:
                 raise
             except Exception as exc:
                 await self._disconnect_locked()
-                raise RedstoneConnectionError(f"WebSocket error: {exc}") from exc
+                raise ConnectionError(f"WebSocket error: {exc}") from exc
 
             if "error" in response:
                 err = response["error"]
@@ -200,28 +220,29 @@ class RedstoneProtocol:
         if self.connected:
             return
 
-        token = load_auth_token()
-        if not token:
-            raise RedstoneConnectionError(
+        auth_candidates = load_auth_token_candidates()
+        if not auth_candidates:
+            raise ConnectionError(
                 "Missing RedstoneAI auth token. Set REDSTONE_AI_AUTH_TOKEN or provide the token file."
             )
 
         errors: list[str] = []
         for host_candidate in discover_host_candidates(self.host):
-            uri = f"ws://{host_candidate}:{self.port}/"
-            try:
-                self._ws = await connect(
-                    uri,
-                    additional_headers={"Authorization": f"Bearer {token}"},
-                    open_timeout=10.0,
-                    max_size=65536,
-                )
-                return
-            except Exception as exc:
-                self._ws = None
-                errors.append(f"{uri}: {exc}")
+            for token_source, token in auth_candidates:
+                uri = f"ws://{host_candidate}:{self.port}/"
+                try:
+                    self._ws = await connect(
+                        uri,
+                        additional_headers={"Authorization": f"Bearer {token}"},
+                        open_timeout=10.0,
+                        max_size=65536,
+                    )
+                    return
+                except Exception as exc:
+                    self._ws = None
+                    errors.append(f"{uri} via {token_source}: {exc}")
 
-        raise RedstoneConnectionError("Failed to connect to RedstoneAI server: " + " | ".join(errors))
+        raise ConnectionError("Failed to connect to RedstoneAI server: " + " | ".join(errors))
 
     async def _disconnect_locked(self) -> None:
         if self._ws is not None:
@@ -239,19 +260,19 @@ class RedstoneProtocol:
             try:
                 response = json.loads(response_text)
             except (TypeError, ValueError) as exc:
-                raise RedstoneConnectionError("Malformed JSON-RPC response") from exc
+                raise ConnectionError("Malformed JSON-RPC response") from exc
 
             if not isinstance(response, dict):
-                raise RedstoneConnectionError("Malformed JSON-RPC response")
+                raise ConnectionError("Malformed JSON-RPC response")
             if response.get("jsonrpc") != "2.0":
-                raise RedstoneConnectionError("Invalid JSON-RPC version in response")
+                raise ConnectionError("Invalid JSON-RPC version in response")
 
             response_id = response.get("id")
             if response_id != request_id:
                 if "result" in response or "error" in response or "method" in response:
                     continue
-                raise RedstoneConnectionError("Malformed JSON-RPC response")
+                raise ConnectionError("Malformed JSON-RPC response")
 
             if "result" not in response and "error" not in response:
-                raise RedstoneConnectionError("Malformed JSON-RPC response")
+                raise ConnectionError("Malformed JSON-RPC response")
             return response
