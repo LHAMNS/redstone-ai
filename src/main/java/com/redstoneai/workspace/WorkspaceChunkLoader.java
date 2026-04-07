@@ -67,20 +67,26 @@ public final class WorkspaceChunkLoader {
      * Release force-loaded chunks for a workspace.
      */
     public static void unloadWorkspace(ServerLevel level, Workspace ws) {
-        Set<ChunkPos> chunks = getWorkspaceChunks(ws);
-        BlockPos ticketAnchor = ws.getOriginPos();
-        for (ChunkPos chunk : chunks) {
-            ForgeChunkManager.forceChunk(level, RedstoneAI.ID, ticketAnchor, chunk.x, chunk.z, false, true);
-        }
-        RedstoneAI.LOGGER.debug("[RedstoneAI] Released {} chunk(s) for workspace '{}'",
-                chunks.size(), ws.getName());
+        unloadWorkspace(level, ws.getBounds(), ws.getOriginPos(), ws.getName());
     }
 
     /**
      * Compute the set of chunk positions covered by a workspace's bounding box.
      */
     private static Set<ChunkPos> getWorkspaceChunks(Workspace ws) {
-        BoundingBox bounds = ws.getBounds();
+        return getWorkspaceChunks(ws.getBounds());
+    }
+
+    public static void unloadWorkspace(ServerLevel level, BoundingBox bounds, BlockPos ticketAnchor, String workspaceName) {
+        Set<ChunkPos> chunks = getWorkspaceChunks(bounds);
+        for (ChunkPos chunk : chunks) {
+            ForgeChunkManager.forceChunk(level, RedstoneAI.ID, ticketAnchor, chunk.x, chunk.z, false, true);
+        }
+        RedstoneAI.LOGGER.debug("[RedstoneAI] Released {} chunk(s) for workspace '{}'",
+                chunks.size(), workspaceName);
+    }
+
+    private static Set<ChunkPos> getWorkspaceChunks(BoundingBox bounds) {
         Set<ChunkPos> chunks = new HashSet<>();
         int minCX = bounds.minX() >> 4;
         int maxCX = bounds.maxX() >> 4;

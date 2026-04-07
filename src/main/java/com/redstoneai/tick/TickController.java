@@ -263,6 +263,23 @@ public final class TickController {
         TickInterceptor.beginStep(ws);
 
         try {
+            // Order matches vanilla ServerLevel.tick():
+            // 1. Block events (pistons, noteblocks) — vanilla runBlockEvents()
+            for (FrozenTickQueue.QueuedBlockEvent queuedEvent : queue.pollDueBlockEvents()) {
+                var event = queuedEvent.event();
+                BlockState state = level.getBlockState(event.pos());
+                if (state.is(event.block())) {
+                    state.triggerEvent(level, event.pos(), event.paramA(), event.paramB());
+                }
+            }
+
+            // 2. Entities
+            tickEntitiesInWorkspace(level, ws);
+
+            // 3. Block entities
+            tickBlockEntitiesInWorkspace(level, ws);
+
+            // 4. Scheduled block ticks (repeaters, comparators, etc.)
             for (FrozenTickQueue.QueuedBlockTick tick : queue.pollDueBlockTicks()) {
                 BlockState state = level.getBlockState(tick.pos());
                 if (state.is(tick.block())) {
@@ -270,20 +287,11 @@ public final class TickController {
                 }
             }
 
+            // 5. Fluid ticks
             for (FrozenTickQueue.QueuedFluidTick tick : queue.pollDueFluidTicks()) {
                 FluidState fluidState = level.getFluidState(tick.pos());
                 if (fluidState.is(tick.fluid())) {
                     fluidState.tick(level, tick.pos());
-                }
-            }
-            tickEntitiesInWorkspace(level, ws);
-            tickBlockEntitiesInWorkspace(level, ws);
-
-            for (FrozenTickQueue.QueuedBlockEvent queuedEvent : queue.pollDueBlockEvents()) {
-                var event = queuedEvent.event();
-                BlockState state = level.getBlockState(event.pos());
-                if (state.is(event.block())) {
-                    state.triggerEvent(level, event.pos(), event.paramA(), event.paramB());
                 }
             }
 

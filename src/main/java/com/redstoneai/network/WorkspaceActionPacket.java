@@ -599,6 +599,11 @@ public class WorkspaceActionPacket {
         if (player.distanceToSqr(controllerPos.getX() + 0.5D, controllerPos.getY() + 0.5D, controllerPos.getZ() + 0.5D) > 64.0D) {
             return null;
         }
+        if (controller.getWorkspaceName().isEmpty() && !player.hasPermissions(2)) {
+            if (controller.getPlacerUUID() == null || !controller.getPlacerUUID().equals(player.getUUID())) {
+                return null;
+            }
+        }
         return controller;
     }
 

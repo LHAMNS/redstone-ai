@@ -168,11 +168,13 @@ public final class TestRunner {
         }
 
         TickController.freeze(level, ws);
+        // freeze() rebuilt the timeline — restore the original one AFTER freeze
+        ws.setTimeline(restoreState.originalTimeline());
+        ws.setVirtualTick(restoreState.originalVirtualTick());
         FrozenTickQueue queue = TickController.getQueue(ws);
         if (queue != null) {
             queue.restore(restoreState.originalQueueState());
         }
-        ws.setVirtualTick(restoreState.originalVirtualTick());
     }
 
     private static void clearRuntimeState(ServerLevel level, Workspace ws) {

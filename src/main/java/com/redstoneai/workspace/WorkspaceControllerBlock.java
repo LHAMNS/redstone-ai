@@ -40,6 +40,16 @@ public class WorkspaceControllerBlock extends Block implements EntityBlock {
     }
 
     @Override
+    public void setPlacedBy(Level level, BlockPos pos, BlockState state,
+                            @Nullable net.minecraft.world.entity.LivingEntity placer,
+                            net.minecraft.world.item.ItemStack stack) {
+        super.setPlacedBy(level, pos, state, placer, stack);
+        if (placer instanceof ServerPlayer sp && level.getBlockEntity(pos) instanceof WorkspaceControllerBlockEntity be) {
+            be.setPlacerUUID(sp.getUUID());
+        }
+    }
+
+    @Override
     public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player,
                                  InteractionHand hand, BlockHitResult hit) {
         if (level.isClientSide) {
@@ -55,8 +65,24 @@ public class WorkspaceControllerBlock extends Block implements EntityBlock {
             return InteractionResult.PASS;
         }
 
-        // Check access: ops or workspace owner can open the GUI
+        // Check access: ops, placer, or workspace owner can open the GUI
         if (!serverPlayer.hasPermissions(2)) {
+            // Unbound controller: only the placer or ops can open
+            if (controller.getWorkspaceName().isEmpty()) {
+                if (controller.getPlacerUUID() == null) {
+                    serverPlayer.sendSystemMessage(Component.literal(
+                                    "This controller has no recorded owner. Ask an operator to claim or replace it.")
+                            .withStyle(net.minecraft.ChatFormatting.RED));
+                    return InteractionResult.CONSUME;
+                }
+                if (!controller.getPlacerUUID().equals(serverPlayer.getUUID())) {
+                    serverPlayer.sendSystemMessage(Component.literal(
+                                    "Only the player who placed this controller can configure it.")
+                            .withStyle(net.minecraft.ChatFormatting.RED));
+                    return InteractionResult.CONSUME;
+                }
+            }
+
             ServerLevel serverLevel = serverPlayer.serverLevel();
             String wsName = controller.getWorkspaceName();
             if (!wsName.isEmpty()) {

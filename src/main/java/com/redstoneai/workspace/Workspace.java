@@ -315,16 +315,17 @@ public class Workspace {
         int[] cpos = tag.getIntArray("controllerPos");
         if (cpos.length < 3) throw new IllegalStateException("Corrupted workspace NBT: controllerPos array too short for '" + name + "'");
         BlockPos controllerPos = new BlockPos(cpos[0], cpos[1], cpos[2]);
-        BlockPos originPos = controllerPos;
+        int[] b = tag.getIntArray("bounds");
+        if (b.length < 6) throw new IllegalStateException("Corrupted workspace NBT: bounds array too short for '" + name + "'");
+        BoundingBox bounds = new BoundingBox(b[0], b[1], b[2], b[3], b[4], b[5]);
+
+        BlockPos originPos = WorkspaceRules.originFromBounds(bounds);
         if (tag.contains("originPos", Tag.TAG_INT_ARRAY)) {
             int[] opos = tag.getIntArray("originPos");
             if (opos.length >= 3) {
                 originPos = new BlockPos(opos[0], opos[1], opos[2]);
             }
         }
-        int[] b = tag.getIntArray("bounds");
-        if (b.length < 6) throw new IllegalStateException("Corrupted workspace NBT: bounds array too short for '" + name + "'");
-        BoundingBox bounds = new BoundingBox(b[0], b[1], b[2], b[3], b[4], b[5]);
 
         Workspace ws = new Workspace(id, owner, name, controllerPos, originPos, bounds);
         ws.protectionMode = ProtectionMode.fromString(tag.getString("protectionMode"));

@@ -600,7 +600,11 @@ async def build(
         )
     else:
         return "Provide either 'mcr' string or 'block' + coordinates"
-    return json.dumps(result, indent=2)
+    output = json.dumps(result, indent=2)
+    skipped = result.get("skipped", 0) if isinstance(result, dict) else 0
+    if skipped > 0:
+        output += f"\nWARNING: {skipped} block(s) were out of workspace bounds and skipped"
+    return output
 
 
 # ── Tool 3: snapshot ───────────────────────────────────────────────

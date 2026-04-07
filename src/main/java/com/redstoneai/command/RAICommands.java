@@ -557,7 +557,15 @@ public final class RAICommands {
             return 0;
         }
 
-        boolean wasFrozen = ws.isFrozen();
+        // Discard frozen state BEFORE updating geometry so chunk tickets
+        // are released using the old bounds, preventing ticket leaks
+        if (ws.isFrozen()) {
+            TickController.discardFrozenState(level, ws);
+        }
+        ws.setTimeline(null);
+        ws.setVirtualTick(0);
+        TickController.removeQueue(ws.getId());
+
         int changed = snapshot.restore(level);
         BlockPos restoredControllerPos = snapshot.getControllerPos() != null ? snapshot.getControllerPos() : controllerPos;
         WorkspaceControllerBlockEntity restoredController = level.getBlockEntity(restoredControllerPos) instanceof WorkspaceControllerBlockEntity restored
@@ -571,12 +579,6 @@ public final class RAICommands {
                 restoredControllerPos,
                 WorkspaceRules.originFromBounds(snapshot.getBounds())
         );
-        ws.setTimeline(null);
-        ws.setVirtualTick(0);
-        TickController.removeQueue(ws.getId());
-        if (wasFrozen) {
-            TickController.discardFrozenState(level, ws);
-        }
 
         ws.setProtectionMode(restoredController.getProtectionMode());
         ws.setEntityFilterMode(restoredController.getEntityFilterMode());

@@ -1,0 +1,22 @@
+Fix 7 bugs: selection overlap, controller claim, tick order, chunk leak, timeline restore
+
+Batch 1:
+- SelectionManager: add overlap check before updateWorkspaceGeometry
+- WorkspaceControllerBlock/BlockEntity: track placer UUID, deny unbound
+  controller access to non-placers (prevents claim hijacking)
+- RecordingSummarizer: level1/level2/level3 now respect rewind cursor
+  (getCurrentIndex) instead of showing future deltas after rewind
+
+Batch 2:
+- TickController.stepOnce: reorder to match vanilla ServerLevel.tick()
+  (block events -> entities -> block entities -> block/fluid ticks)
+- RAICommands.revertWorkspace: discard frozen state BEFORE updating
+  geometry to release old chunk tickets with correct bounds
+- TestRunner.restoreSuiteState: restore original timeline AFTER freeze()
+  since freeze() rebuilds the timeline
+
+Batch 3:
+- Python server.py build(): add WARNING when MCR blocks are skipped
+  due to out-of-bounds coordinates
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>

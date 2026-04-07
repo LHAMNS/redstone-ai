@@ -203,7 +203,7 @@ public final class WorkspaceAccessControl {
     }
 
     public static boolean shouldBlockExternalEntityInteraction(Entity protectedEntity, @Nullable Entity other) {
-        Workspace workspace = findWorkspaceForEntity(protectedEntity);
+        Workspace workspace = findFrozenWorkspaceForEntity(protectedEntity);
         if (workspace == null || workspace.isAllowFrozenEntityCollision()) {
             return false;
         }
@@ -214,7 +214,7 @@ public final class WorkspaceAccessControl {
             return true;
         }
 
-        Workspace otherWorkspace = findWorkspaceForEntity(other);
+        Workspace otherWorkspace = findFrozenWorkspaceForEntity(other);
         return otherWorkspace == null || !otherWorkspace.getId().equals(workspace.getId());
     }
 

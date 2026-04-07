@@ -46,9 +46,9 @@ public final class RecordingSummarizer {
             }
         }
 
-        // Count total changes
+        // Count total changes up to current rewind position
         int totalChanges = 0;
-        for (int i = 0; i < timeline.getLength(); i++) {
+        for (int i = 0; i <= timeline.getCurrentIndex() && i < timeline.getLength(); i++) {
             TickSnapshot delta = timeline.getDelta(i);
             if (delta != null) totalChanges += delta.blockChanges().size();
         }
@@ -78,7 +78,9 @@ public final class RecordingSummarizer {
         if (markers.isEmpty()) return "No IO markers defined.";
 
         int start = Math.max(0, fromTick);
-        int end = toTick < 0 ? timeline.getLength() - 1 : Math.min(toTick, timeline.getLength() - 1);
+        // Only show ticks up to the current rewind position, not future deltas
+        int maxVisible = timeline.getCurrentIndex();
+        int end = toTick < 0 ? maxVisible : Math.min(toTick, maxVisible);
 
         // Limit width to 64 ticks for readability
         if (end - start > 63) end = start + 63;
@@ -132,7 +134,8 @@ public final class RecordingSummarizer {
         if (timeline.getLength() == 0) return "Empty recording.";
 
         int start = Math.max(0, fromTick);
-        int end = toTick < 0 ? timeline.getLength() - 1 : Math.min(toTick, timeline.getLength() - 1);
+        int maxVisible = timeline.getCurrentIndex();
+        int end = toTick < 0 ? maxVisible : Math.min(toTick, maxVisible);
 
         // Limit to 20 ticks per call for token budget
         if (end - start > 19) end = start + 19;

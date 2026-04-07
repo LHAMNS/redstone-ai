@@ -27,6 +27,8 @@ import java.util.List;
  */
 public class WorkspaceControllerBlockEntity extends BlockEntity {
     private String workspaceName = "";
+    @Nullable
+    private java.util.UUID placerUUID;
     private int sizeX = 16;
     private int sizeY = 8;
     private int sizeZ = 16;
@@ -74,6 +76,14 @@ public class WorkspaceControllerBlockEntity extends BlockEntity {
 
     public void setWorkspaceName(String name) {
         this.workspaceName = name;
+        setChanged();
+    }
+
+    @Nullable
+    public java.util.UUID getPlacerUUID() { return placerUUID; }
+
+    public void setPlacerUUID(@Nullable java.util.UUID uuid) {
+        this.placerUUID = uuid;
         setChanged();
     }
 
@@ -293,6 +303,9 @@ public class WorkspaceControllerBlockEntity extends BlockEntity {
     protected void saveAdditional(CompoundTag tag) {
         super.saveAdditional(tag);
         tag.putString("workspaceName", workspaceName);
+        if (placerUUID != null) {
+            tag.putUUID("placerUUID", placerUUID);
+        }
         tag.putInt("sizeX", sizeX);
         tag.putInt("sizeY", sizeY);
         tag.putInt("sizeZ", sizeZ);
@@ -334,6 +347,7 @@ public class WorkspaceControllerBlockEntity extends BlockEntity {
     public void load(CompoundTag tag) {
         super.load(tag);
         workspaceName = tag.getString("workspaceName");
+        placerUUID = tag.hasUUID("placerUUID") ? tag.getUUID("placerUUID") : null;
         sizeX = tag.contains("sizeX") ? tag.getInt("sizeX") : 16;
         sizeY = tag.contains("sizeY") ? tag.getInt("sizeY") : 8;
         sizeZ = tag.contains("sizeZ") ? tag.getInt("sizeZ") : 16;

@@ -131,6 +131,13 @@ public final class SelectionManager {
                 state.controllerPos.getY() - 1,
                 maxZ
         );
+        if (workspace != null) {
+            WorkspaceManager manager = WorkspaceManager.get(level);
+            String overlapping = manager.checkOverlap(bounds, workspace.getId());
+            if (overlapping != null) {
+                return failSelection(player, "Selection overlaps workspace '" + overlapping + "'.");
+            }
+        }
         BlockPos finalControllerPos = state.controllerPos;
         WorkspaceControllerBlockEntity targetController = controller;
 
