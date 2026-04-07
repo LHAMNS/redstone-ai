@@ -18,7 +18,7 @@ import java.util.*;
  * #=stone  G=glass  S=redstone_lamp  N=note_block  _=air
  * A=target  X=tnt  I=dropper  J=dispenser  Q=daylight_detector
  * </pre>
- * <b>Modifiers:</b> n/e/s/w = facing, 1-4 = delay, c/s = compare/subtract mode
+ * <b>Modifiers:</b> n/e/s/w = facing, 1-4 = delay, c/x = compare/subtract mode
  * <p>
  * <b>Directives:</b>
  * <pre>

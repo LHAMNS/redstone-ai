@@ -910,6 +910,47 @@ public class RAIGameTests {
     }
 
     @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void workspace_scan_normalizes_reversed_and_open_crop_ranges(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        WorkspaceHandler handler = new WorkspaceHandler();
+        String name = "gt_scan_crop_reverse";
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(1, 6, 3));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), WorkspaceRules.API_OWNER, name, controllerPos, bounds);
+        WorkspaceManager.get(level).addWorkspace(ws);
+
+        try {
+            level.setBlock(ws.toWorldPos(1, 3, 1), Blocks.STONE.defaultBlockState(), 3);
+            level.setBlock(ws.toWorldPos(4, 0, 4), Blocks.GLASS.defaultBlockState(), 3);
+
+            JsonObject scanParams = new JsonObject();
+            scanParams.addProperty("name", name);
+            scanParams.addProperty("fromX", 4);
+            scanParams.addProperty("toX", 1);
+            scanParams.addProperty("fromY", -1);
+            scanParams.addProperty("toY", 3);
+            scanParams.addProperty("fromZ", 4);
+            scanParams.addProperty("toZ", 1);
+
+            JsonObject result = handler.scan(new JsonRpcRequest("1", "workspace.scan", scanParams), level.getServer())
+                    .getAsJsonObject();
+
+            helper.assertTrue(result.get("fromX").getAsInt() == 1, "fromX normalized");
+            helper.assertTrue(result.get("toX").getAsInt() == 4, "toX normalized");
+            helper.assertTrue(result.get("fromY").getAsInt() == 0, "fromY normalized from open range");
+            helper.assertTrue(result.get("toY").getAsInt() == 3, "toY normalized to max");
+            helper.assertTrue(result.get("fromZ").getAsInt() == 1, "fromZ normalized");
+            helper.assertTrue(result.get("toZ").getAsInt() == 4, "toZ normalized");
+            helper.assertTrue(result.getAsJsonArray("blocks").size() == 2, "reversed/open crop still returns matching blocks");
+        } catch (JsonRpcException e) {
+            helper.fail("Reversed crop scan should succeed: " + e.getMessage());
+        } finally {
+            WorkspaceManager.get(level).removeWorkspace(name);
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
     public static void workspace_configure_and_revert_rpc_support_full_ai_loop(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         WorkspaceHandler handler = new WorkspaceHandler();
@@ -1042,6 +1083,56 @@ public class RAIGameTests {
     }
 
     @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void workspace_history_and_revert_survive_multiple_config_cycles(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        WorkspaceHandler handler = new WorkspaceHandler();
+        String name = "gt_history_cycle";
+        Workspace ws = null;
+
+        try {
+            JsonObject createParams = new JsonObject();
+            createParams.addProperty("name", name);
+            createParams.addProperty("sizeX", 5);
+            createParams.addProperty("sizeY", 4);
+            createParams.addProperty("sizeZ", 5);
+            handler.create(new JsonRpcRequest("1", "workspace.create", createParams), level.getServer());
+            ws = WorkspaceManager.get(level).getByName(name);
+            helper.assertTrue(ws != null, "workspace created");
+
+            for (int i = 0; i < 2; i++) {
+                JsonObject configureParams = new JsonObject();
+                configureParams.addProperty("name", name);
+                configureParams.addProperty("mode", i == 0 ? "collaborative" : "ai_only");
+                configureParams.addProperty("allowVanillaCommands", i == 0);
+                handler.configure(new JsonRpcRequest("cfg" + i, "workspace.configure", configureParams), level.getServer());
+
+                BlockPos changedPos = ws.toWorldPos(i, 0, i);
+                level.setBlock(changedPos, i == 0 ? Blocks.STONE.defaultBlockState() : Blocks.GLASS.defaultBlockState(), 3);
+                JsonObject revertParams = new JsonObject();
+                revertParams.addProperty("name", name);
+                JsonObject reverted = handler.revert(new JsonRpcRequest("rev" + i, "workspace.revert", revertParams), level.getServer())
+                        .getAsJsonObject();
+                helper.assertTrue(reverted.get("hasSnapshot").getAsBoolean(), "snapshot retained after revert cycle");
+
+                JsonObject historyParams = new JsonObject();
+                historyParams.addProperty("name", name);
+                historyParams.addProperty("limit", 20);
+                JsonObject history = handler.history(new JsonRpcRequest("hist" + i, "workspace.history", historyParams), level.getServer())
+                        .getAsJsonObject();
+                helper.assertTrue(history.getAsJsonArray("logEntries").size() >= 2, "history retains config/revert entries");
+            }
+        } catch (JsonRpcException e) {
+            helper.fail("Config/history/revert cycle should succeed: " + e.getMessage());
+        } finally {
+            if (ws != null) {
+                level.setBlock(ws.getControllerPos(), Blocks.AIR.defaultBlockState(), 3);
+                WorkspaceManager.get(level).removeWorkspace(name);
+            }
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
     public static void rpc_single_test_is_isolated_and_restores_input_fixture(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         BlockPos controllerPos = helper.absolutePos(new BlockPos(2, 7, 7));
@@ -1077,6 +1168,75 @@ public class RAIGameTests {
             helper.fail("Single RPC test should be isolated: " + e.getMessage());
         } finally {
             WorkspaceManager.get(level).removeWorkspace("gt_probe_isolated");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void block_entity_write_rejects_invalid_snbt(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(3, 7, 7));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), WorkspaceRules.API_OWNER, "gt_block_entity_invalid", controllerPos, bounds);
+        WorkspaceManager.get(level).addWorkspace(ws);
+        level.setBlock(ws.toWorldPos(0, 0, 0), Blocks.CHEST.defaultBlockState(), 3);
+
+        try {
+            JsonObject params = new JsonObject();
+            params.addProperty("workspace", ws.getName());
+            params.addProperty("x", 0);
+            params.addProperty("y", 0);
+            params.addProperty("z", 0);
+            params.addProperty("nbt", "{Items:[}");
+            params.addProperty("mode", "merge");
+
+            try {
+                new BlockEntityHandler().write(new JsonRpcRequest("1", "block_entity.write", params), level.getServer());
+                helper.fail("Expected invalid SNBT to be rejected");
+            } catch (JsonRpcException e) {
+                helper.assertTrue(e.getCode() == JsonRpcException.INVALID_PARAMS, "invalid params code");
+            }
+        } finally {
+            WorkspaceManager.get(level).removeWorkspace("gt_block_entity_invalid");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void entity_handler_rejects_invalid_uuid_and_out_of_bounds_spawn(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(4, 7, 7));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), WorkspaceRules.API_OWNER, "gt_entity_invalid", controllerPos, bounds);
+        WorkspaceManager.get(level).addWorkspace(ws);
+
+        try {
+            JsonObject spawnParams = new JsonObject();
+            spawnParams.addProperty("workspace", ws.getName());
+            spawnParams.addProperty("entityType", "minecraft:armor_stand");
+            spawnParams.addProperty("x", 20.0);
+            spawnParams.addProperty("y", 0.0);
+            spawnParams.addProperty("z", 0.0);
+            spawnParams.addProperty("nbt", "{}");
+
+            try {
+                new EntityHandler().spawn(new JsonRpcRequest("1", "entity.spawn", spawnParams), level.getServer());
+                helper.fail("Expected out-of-bounds spawn to be rejected");
+            } catch (JsonRpcException e) {
+                helper.assertTrue(e.getCode() == JsonRpcException.INVALID_PARAMS, "spawn invalid params code");
+            }
+
+            JsonObject removeParams = new JsonObject();
+            removeParams.addProperty("workspace", ws.getName());
+            removeParams.addProperty("uuid", "not-a-uuid");
+            try {
+                new EntityHandler().remove(new JsonRpcRequest("2", "entity.remove", removeParams), level.getServer());
+                helper.fail("Expected invalid UUID removal to be rejected");
+            } catch (JsonRpcException e) {
+                helper.assertTrue(e.getCode() == JsonRpcException.INVALID_PARAMS, "remove invalid params code");
+            }
+        } finally {
+            WorkspaceManager.get(level).removeWorkspace("gt_entity_invalid");
         }
         helper.succeed();
     }

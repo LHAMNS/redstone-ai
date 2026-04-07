@@ -1,0 +1,11 @@
+Fix WebSocket session tracking, ConnectionError shadow, MCR javadoc
+
+- WsAuthHandshakeHandler: remove SessionManager.remove() from
+  handlerRemoved/channelInactive to prevent session being deleted
+  immediately after successful WebSocket upgrade. Session lifecycle
+  is now solely managed by WSFrameHandler.
+- errors.py: rename to RedstoneConnectionError with backward-compat
+  alias to avoid shadowing Python's builtin ConnectionError
+- MCRParser: fix javadoc c/s -> c/x for comparator subtract mode
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>

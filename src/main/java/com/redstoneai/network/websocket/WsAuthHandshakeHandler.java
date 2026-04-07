@@ -47,12 +47,14 @@ public class WsAuthHandshakeHandler extends SimpleChannelInboundHandler<FullHttp
 
     @Override
     public void handlerRemoved(ChannelHandlerContext ctx) {
-        SessionManager.remove(ctx.channel());
+        // Do NOT remove the session here — this handler is removed from the pipeline
+        // after a successful upgrade, which would prematurely kill the session.
+        // Session lifecycle is managed by WSFrameHandler.
     }
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-        SessionManager.remove(ctx.channel());
+        // Session cleanup is handled by WSFrameHandler.channelInactive
         super.channelInactive(ctx);
     }
 

@@ -5,6 +5,13 @@
   "compatibilityLevel": "JAVA_17",
   "refmap": "redstone_ai.refmap.json",
   "mixins": [
+    "BlockDataAccessorMixin",
+    "CommandProtectionCloneMixin",
+    "CommandProtectionDataMixin",
+    "CommandProtectionFillMixin",
+    "CommandProtectionSetBlockMixin",
+    "EntityDataAccessorMixin",
+    "EntityProtectionMixin",
     "LevelAccessor",
     "LevelBlockEntityTickMixin",
     "LevelNeighborUpdateMixin",
