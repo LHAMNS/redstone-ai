@@ -1,0 +1,13 @@
+Fix WsAuthHandshakeHandler session removal, bump Python max workspace size
+
+- WsAuthHandshakeHandler: don't remove session in handlerRemoved or
+  channelInactive — the handler is removed from pipeline after
+  successful upgrade, which would prematurely kill the session.
+  Session lifecycle is solely managed by WSFrameHandler.
+- Python server.py: _MAX_WORKSPACE_SIZE 32 -> 64 to match server
+  config upper limit (RAIConfig.SERVER.maxWorkspaceSize max=64)
+
+Verified: ChunkPos.asLong(BlockPos) correctly calls
+SectionPos.blockToSectionCoord (>> 4) — spatial lookup is correct.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
