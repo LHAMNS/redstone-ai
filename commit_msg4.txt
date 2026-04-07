@@ -1,0 +1,17 @@
+Major improvements: workspace origin system, settle command, inspect views, entity lifecycle
+
+- Workspace now has separate originPos for coordinate translation (toWorldPos/toRelativePos)
+- WorkspaceRules: resizeBounds, createBoundsFromController, originFromBounds helpers
+- WorkspaceManager: getByControllerPos, updateWorkspaceGeometry with origin support
+- SimulationHandler: new settle() command with quiet-tick detection
+- WorkspaceProtectionHandler: controller lookup via getByControllerPos
+- SelectionManager: bounds below controller (Y-down), geometry update with origin
+- WorkspaceActionPacket: resolveInitialBounds, origin-aware create/resize/revert
+- RAICommands: resolveInitialBounds, origin display in info, ownership checks
+- TickController: dual-name reflection (Mojang + SRG), entity removal bypass
+- WorkspacePreviewWidget: controller indicator, preview title/controls
+- Lang files: preview labels, controller indicator text
+- GameTests: suite frozen/unfrozen restore, tick budget, controller marker rejection
+- System prompt: comprehensive tool docs, coordinate contract, inspect views
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>

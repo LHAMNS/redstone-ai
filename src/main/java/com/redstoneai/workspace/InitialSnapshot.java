@@ -12,8 +12,10 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
 import javax.annotation.Nullable;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Captures and restores the complete initial state of a workspace region.
@@ -143,6 +145,20 @@ public class InitialSnapshot {
 
     public BoundingBox getBounds() {
         return bounds;
+    }
+
+    public BlockState getBlockState(BlockPos pos) {
+        return blockStates.getOrDefault(pos, Blocks.AIR.defaultBlockState());
+    }
+
+    @Nullable
+    public CompoundTag getTileEntityData(BlockPos pos) {
+        CompoundTag tag = tileEntities.get(pos);
+        return tag != null ? tag.copy() : null;
+    }
+
+    public Set<BlockPos> getStoredPositions() {
+        return Collections.unmodifiableSet(blockStates.keySet());
     }
 
     @Nullable

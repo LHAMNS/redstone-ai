@@ -12,6 +12,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
 
 /**
@@ -29,6 +30,14 @@ public class WorkspaceControllerBlockEntity extends BlockEntity {
     private int sizeX = 16;
     private int sizeY = 8;
     private int sizeZ = 16;
+    private ProtectionMode protectionMode = ProtectionMode.AI_ONLY;
+    private EntityFilterMode entityFilterMode = EntityFilterMode.ALL_NON_PLAYER;
+    private final List<String> authorizedPlayers = new ArrayList<>();
+    private final List<PlayerPermissionGrant> playerPermissionGrants = new ArrayList<>();
+    private boolean allowVanillaCommands = false;
+    private boolean allowFrozenEntityTeleport = false;
+    private boolean allowFrozenEntityDamage = false;
+    private boolean allowFrozenEntityCollision = false;
 
     @Nullable
     private InitialSnapshot initialSnapshot;
@@ -82,6 +91,127 @@ public class WorkspaceControllerBlockEntity extends BlockEntity {
         setChanged();
     }
 
+    public ProtectionMode getProtectionMode() { return protectionMode; }
+    public EntityFilterMode getEntityFilterMode() { return entityFilterMode; }
+    public List<String> getAuthorizedPlayers() { return Collections.unmodifiableList(authorizedPlayers); }
+    public List<PlayerPermissionGrant> getPlayerPermissionGrants() { return List.copyOf(playerPermissionGrants); }
+    public boolean isAllowVanillaCommands() { return allowVanillaCommands; }
+    public boolean isAllowFrozenEntityTeleport() { return allowFrozenEntityTeleport; }
+    public boolean isAllowFrozenEntityDamage() { return allowFrozenEntityDamage; }
+    public boolean isAllowFrozenEntityCollision() { return allowFrozenEntityCollision; }
+
+    public void setProtectionMode(ProtectionMode protectionMode) {
+        this.protectionMode = protectionMode;
+        setChanged();
+    }
+
+    public void setEntityFilterMode(EntityFilterMode entityFilterMode) {
+        this.entityFilterMode = entityFilterMode;
+        setChanged();
+    }
+
+    public void replaceAuthorizedPlayers(List<String> authorizedPlayers) {
+        this.authorizedPlayers.clear();
+        this.authorizedPlayers.addAll(authorizedPlayers);
+        for (String playerName : authorizedPlayers) {
+            setPlayerPermission(playerName, WorkspacePermission.BUILD, true);
+            setPlayerPermission(playerName, WorkspacePermission.TIME_CONTROL, true);
+            setPlayerPermission(playerName, WorkspacePermission.VIEW_HISTORY, true);
+            setPlayerPermission(playerName, WorkspacePermission.CHAT, true);
+        }
+        setChanged();
+    }
+
+    public void replacePlayerPermissionGrants(List<PlayerPermissionGrant> grants) {
+        this.playerPermissionGrants.clear();
+        this.authorizedPlayers.clear();
+        for (PlayerPermissionGrant grant : grants) {
+            upsertGrant(grant);
+        }
+        setChanged();
+    }
+
+    public void setAllowVanillaCommands(boolean allowVanillaCommands) {
+        this.allowVanillaCommands = allowVanillaCommands;
+        setChanged();
+    }
+
+    public void setAllowFrozenEntityTeleport(boolean allowFrozenEntityTeleport) {
+        this.allowFrozenEntityTeleport = allowFrozenEntityTeleport;
+        setChanged();
+    }
+
+    public void setAllowFrozenEntityDamage(boolean allowFrozenEntityDamage) {
+        this.allowFrozenEntityDamage = allowFrozenEntityDamage;
+        setChanged();
+    }
+
+    public void setAllowFrozenEntityCollision(boolean allowFrozenEntityCollision) {
+        this.allowFrozenEntityCollision = allowFrozenEntityCollision;
+        setChanged();
+    }
+
+    public boolean hasPermission(String playerName, WorkspacePermission permission) {
+        String normalized = WorkspaceAccessControl.normalizePlayerName(playerName);
+        for (PlayerPermissionGrant grant : playerPermissionGrants) {
+            if (grant.playerName().equals(normalized)) {
+                return grant.has(permission);
+            }
+        }
+        return false;
+    }
+
+    public void setPlayerPermission(String playerName, WorkspacePermission permission, boolean enabled) {
+        String normalized = WorkspaceAccessControl.normalizePlayerName(playerName);
+        if (normalized.isBlank()) {
+            return;
+        }
+
+        EnumSet<WorkspacePermission> updatedPermissions = EnumSet.noneOf(WorkspacePermission.class);
+        int existingIndex = -1;
+        for (int i = 0; i < playerPermissionGrants.size(); i++) {
+            PlayerPermissionGrant grant = playerPermissionGrants.get(i);
+            if (grant.playerName().equals(normalized)) {
+                updatedPermissions = grant.permissions();
+                existingIndex = i;
+                break;
+            }
+        }
+
+        if (enabled) {
+            updatedPermissions.add(permission);
+        } else {
+            updatedPermissions.remove(permission);
+        }
+
+        if (updatedPermissions.isEmpty()) {
+            if (existingIndex >= 0) {
+                playerPermissionGrants.remove(existingIndex);
+            }
+            authorizedPlayers.remove(normalized);
+            setChanged();
+            return;
+        }
+
+        PlayerPermissionGrant updated = new PlayerPermissionGrant(normalized, updatedPermissions);
+        if (existingIndex >= 0) {
+            playerPermissionGrants.set(existingIndex, updated);
+        } else {
+            playerPermissionGrants.add(updated);
+        }
+        if (!authorizedPlayers.contains(normalized)) {
+            authorizedPlayers.add(normalized);
+        }
+        setChanged();
+    }
+
+    public void removePlayerPermissions(String playerName) {
+        String normalized = WorkspaceAccessControl.normalizePlayerName(playerName);
+        playerPermissionGrants.removeIf(grant -> grant.playerName().equals(normalized));
+        authorizedPlayers.remove(normalized);
+        setChanged();
+    }
+
     // ── Initial Snapshot ─────────────────────────────────────────────
 
     @Nullable
@@ -122,6 +252,16 @@ public class WorkspaceControllerBlockEntity extends BlockEntity {
         this.sizeX = source.sizeX;
         this.sizeY = source.sizeY;
         this.sizeZ = source.sizeZ;
+        this.protectionMode = source.protectionMode;
+        this.entityFilterMode = source.entityFilterMode;
+        this.authorizedPlayers.clear();
+        this.authorizedPlayers.addAll(source.authorizedPlayers);
+        this.playerPermissionGrants.clear();
+        this.playerPermissionGrants.addAll(source.playerPermissionGrants);
+        this.allowVanillaCommands = source.allowVanillaCommands;
+        this.allowFrozenEntityTeleport = source.allowFrozenEntityTeleport;
+        this.allowFrozenEntityDamage = source.allowFrozenEntityDamage;
+        this.allowFrozenEntityCollision = source.allowFrozenEntityCollision;
         this.initialSnapshot = source.initialSnapshot;
         this.operationLog.replaceEntries(source.operationLog.getEntries());
         this.chatHistory.clear();
@@ -156,6 +296,12 @@ public class WorkspaceControllerBlockEntity extends BlockEntity {
         tag.putInt("sizeX", sizeX);
         tag.putInt("sizeY", sizeY);
         tag.putInt("sizeZ", sizeZ);
+        tag.putString("protectionMode", protectionMode.getSerializedName());
+        tag.putString("entityFilterMode", entityFilterMode.getSerializedName());
+        tag.putBoolean("allowVanillaCommands", allowVanillaCommands);
+        tag.putBoolean("allowFrozenEntityTeleport", allowFrozenEntityTeleport);
+        tag.putBoolean("allowFrozenEntityDamage", allowFrozenEntityDamage);
+        tag.putBoolean("allowFrozenEntityCollision", allowFrozenEntityCollision);
 
         if (initialSnapshot != null) {
             tag.put("initialSnapshot", initialSnapshot.save());
@@ -168,6 +314,20 @@ public class WorkspaceControllerBlockEntity extends BlockEntity {
             chatList.add(msg.save());
         }
         tag.put("chatHistory", chatList);
+
+        ListTag authorizedPlayersTag = new ListTag();
+        for (String playerName : authorizedPlayers) {
+            CompoundTag playerTag = new CompoundTag();
+            playerTag.putString("name", playerName);
+            authorizedPlayersTag.add(playerTag);
+        }
+        tag.put("authorizedPlayers", authorizedPlayersTag);
+
+        ListTag permissionGrantsTag = new ListTag();
+        for (PlayerPermissionGrant grant : playerPermissionGrants) {
+            permissionGrantsTag.add(grant.save());
+        }
+        tag.put("playerPermissionGrants", permissionGrantsTag);
     }
 
     @Override
@@ -177,6 +337,16 @@ public class WorkspaceControllerBlockEntity extends BlockEntity {
         sizeX = tag.contains("sizeX") ? tag.getInt("sizeX") : 16;
         sizeY = tag.contains("sizeY") ? tag.getInt("sizeY") : 8;
         sizeZ = tag.contains("sizeZ") ? tag.getInt("sizeZ") : 16;
+        protectionMode = tag.contains("protectionMode")
+                ? ProtectionMode.fromString(tag.getString("protectionMode"))
+                : ProtectionMode.AI_ONLY;
+        entityFilterMode = tag.contains("entityFilterMode")
+                ? EntityFilterMode.fromString(tag.getString("entityFilterMode"))
+                : EntityFilterMode.ALL_NON_PLAYER;
+        allowVanillaCommands = tag.getBoolean("allowVanillaCommands");
+        allowFrozenEntityTeleport = tag.getBoolean("allowFrozenEntityTeleport");
+        allowFrozenEntityDamage = tag.getBoolean("allowFrozenEntityDamage");
+        allowFrozenEntityCollision = tag.getBoolean("allowFrozenEntityCollision");
 
         initialSnapshot = tag.contains("initialSnapshot", Tag.TAG_COMPOUND)
                 ? InitialSnapshot.load(tag.getCompound("initialSnapshot"))
@@ -194,6 +364,40 @@ public class WorkspaceControllerBlockEntity extends BlockEntity {
             for (int i = 0; i < chatList.size(); i++) {
                 chatHistory.add(ChatMessage.load(chatList.getCompound(i)));
             }
+        }
+
+        authorizedPlayers.clear();
+        if (tag.contains("authorizedPlayers", Tag.TAG_LIST)) {
+            ListTag playerList = tag.getList("authorizedPlayers", Tag.TAG_COMPOUND);
+            for (int i = 0; i < playerList.size(); i++) {
+                String playerName = playerList.getCompound(i).getString("name");
+                if (!playerName.isBlank()) {
+                    authorizedPlayers.add(playerName);
+                }
+            }
+        }
+
+        playerPermissionGrants.clear();
+        if (tag.contains("playerPermissionGrants", Tag.TAG_LIST)) {
+            ListTag grants = tag.getList("playerPermissionGrants", Tag.TAG_COMPOUND);
+            for (int i = 0; i < grants.size(); i++) {
+                upsertGrant(PlayerPermissionGrant.load(grants.getCompound(i)));
+            }
+        } else {
+            for (String playerName : authorizedPlayers) {
+                setPlayerPermission(playerName, WorkspacePermission.BUILD, true);
+                setPlayerPermission(playerName, WorkspacePermission.TIME_CONTROL, true);
+                setPlayerPermission(playerName, WorkspacePermission.VIEW_HISTORY, true);
+                setPlayerPermission(playerName, WorkspacePermission.CHAT, true);
+            }
+        }
+    }
+
+    private void upsertGrant(PlayerPermissionGrant grant) {
+        playerPermissionGrants.removeIf(existing -> existing.playerName().equals(grant.playerName()));
+        playerPermissionGrants.add(grant);
+        if (!authorizedPlayers.contains(grant.playerName())) {
+            authorizedPlayers.add(grant.playerName());
         }
     }
 }

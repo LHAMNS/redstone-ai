@@ -37,9 +37,16 @@ public class TestHandler {
         validateTickCount(ticks, "Tick count exceeds configured maximum");
         validateNoControllerMarkers(ws, inputs, "input");
         validateNoControllerMarkers(ws, expected, "expected output");
+        validateSignalLevels(inputs, "input");
+        validateSignalLevels(expected, "expected output");
 
         TestCase testCase = new TestCase("", toIntMap(inputs), toIntMap(expected), ticks);
-        TestResult result = TestRunner.runSingle(level, ws, testCase);
+        TestResult result;
+        try {
+            result = TestRunner.runSuite(level, ws, new TestSuite("rpc_single", List.of(testCase))).get(0);
+        } catch (IllegalArgumentException e) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS, e.getMessage());
+        }
 
         JsonObject response = new JsonObject();
         response.addProperty("pass", result.passed());
@@ -76,6 +83,8 @@ public class TestHandler {
             validateTickCount(caseTicks, "Test case tick count exceeds configured maximum");
             validateNoControllerMarkers(ws, inputs, "input");
             validateNoControllerMarkers(ws, expected, "expected output");
+            validateSignalLevels(inputs, "input");
+            validateSignalLevels(expected, "expected output");
             totalTicks += caseTicks;
             validateSuiteWorkBudget(totalTicks);
             builder.addCase(new TestCase(toIntMap(inputs), toIntMap(expected), caseTicks));
@@ -154,6 +163,22 @@ public class TestHandler {
         if (totalTicks > RAIConfig.SERVER.maxRecordingTicks.get()) {
             throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
                     "Suite total tick budget exceeds configured maximum");
+        }
+    }
+
+    private static void validateSignalLevels(JsonObject spec, String roleLabel) throws JsonRpcException {
+        for (var entry : spec.entrySet()) {
+            int value;
+            try {
+                value = entry.getValue().getAsInt();
+            } catch (RuntimeException e) {
+                throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                        roleLabel + " value for '" + entry.getKey() + "' must be an integer");
+            }
+            if (value < 0 || value > 15) {
+                throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                        roleLabel + " value for '" + entry.getKey() + "' must be between 0 and 15");
+            }
         }
     }
 

@@ -32,7 +32,7 @@ public final class MCRPlacer {
      * Positions are offset relative to workspace origin.
      */
     public static PlaceResult place(ServerLevel level, Workspace ws, List<MCRBlock> blocks) {
-        BlockPos origin = ws.getControllerPos();
+        BlockPos origin = ws.getOriginPos();
         BoundingBox bounds = ws.getBounds();
         int placed = 0;
         int skipped = 0;

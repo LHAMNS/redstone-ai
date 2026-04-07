@@ -18,8 +18,10 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Property;
 
 import java.util.List;
+import java.util.Optional;
 
 public class BuildHandler {
 
@@ -61,12 +63,15 @@ public class BuildHandler {
                 .orElseThrow(() -> new JsonRpcException(JsonRpcException.INVALID_PARAMS, "Unknown block: " + blockId));
 
         ServerLevel level = server.overworld();
-        BlockPos worldPos = workspace.getControllerPos().offset(x, y, z);
+        BlockPos worldPos = workspace.toWorldPos(x, y, z);
         if (!WorkspaceRules.isEditableBlock(workspace, worldPos)) {
             throw new JsonRpcException(JsonRpcException.INVALID_PARAMS, "Position out of bounds or reserved for the controller");
         }
 
         BlockState state = block.defaultBlockState();
+        if (req.params() != null && req.params().has("properties")) {
+            state = applyRequestedProperties(state, req.params().get("properties"));
+        }
         level.setBlock(worldPos, state, 3);
         TickController.invalidateRecording(level, workspace);
 
@@ -93,5 +98,38 @@ public class BuildHandler {
             throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
                     "Workspace mode '" + workspace.getProtectionMode().getSerializedName() + "' does not allow AI mutation");
         }
+    }
+
+    private BlockState applyRequestedProperties(BlockState state, JsonElement propertiesElement) throws JsonRpcException {
+        if (!propertiesElement.isJsonObject()) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS, "properties must be a JSON object");
+        }
+
+        BlockState updated = state;
+        JsonObject properties = propertiesElement.getAsJsonObject();
+        for (var entry : properties.entrySet()) {
+            String propertyName = entry.getKey();
+            Property<?> property = updated.getBlock().getStateDefinition().getProperty(propertyName);
+            if (property == null) {
+                throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                        "Block does not support property '" + propertyName + "'");
+            }
+            if (!entry.getValue().isJsonPrimitive()) {
+                throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                        "Property '" + propertyName + "' must be a primitive value");
+            }
+            updated = applyPropertyValue(updated, property, entry.getValue().getAsString());
+        }
+        return updated;
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private BlockState applyPropertyValue(BlockState state, Property property, String rawValue) throws JsonRpcException {
+        Optional parsed = property.getValue(rawValue);
+        if (parsed.isEmpty()) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                    "Invalid value '" + rawValue + "' for property '" + property.getName() + "'");
+        }
+        return state.setValue(property, (Comparable) parsed.get());
     }
 }

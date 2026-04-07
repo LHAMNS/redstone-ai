@@ -54,6 +54,38 @@ public final class WorkspaceRules {
         return ws.contains(pos) && !ws.getControllerPos().equals(pos);
     }
 
+    public static BoundingBox createBoundsFromController(BlockPos controllerPos, int sizeX, int sizeY, int sizeZ) {
+        return new BoundingBox(
+                controllerPos.getX(),
+                controllerPos.getY() - sizeY,
+                controllerPos.getZ(),
+                controllerPos.getX() + sizeX - 1,
+                controllerPos.getY() - 1,
+                controllerPos.getZ() + sizeZ - 1
+        );
+    }
+
+    public static BoundingBox resizeBounds(BoundingBox currentBounds, int controllerY, int sizeX, int sizeY, int sizeZ) {
+        return new BoundingBox(
+                currentBounds.minX(),
+                controllerY - sizeY,
+                currentBounds.minZ(),
+                currentBounds.minX() + sizeX - 1,
+                controllerY - 1,
+                currentBounds.minZ() + sizeZ - 1
+        );
+    }
+
+    public static BlockPos originFromBounds(BoundingBox bounds) {
+        return new BlockPos(bounds.minX(), bounds.minY(), bounds.minZ());
+    }
+
+    public static boolean matchesDimensions(BoundingBox bounds, int sizeX, int sizeY, int sizeZ) {
+        return bounds.getXSpan() == sizeX
+                && bounds.getYSpan() == sizeY
+                && bounds.getZSpan() == sizeZ;
+    }
+
     public static boolean isValidTickCount(int count) {
         return count >= 1 && count <= RAIConfig.SERVER.maxStepsPerCall.get();
     }

@@ -67,7 +67,7 @@ public class WorkspaceControllerBlock extends Block implements EntityBlock {
                             .withStyle(net.minecraft.ChatFormatting.RED));
                     return InteractionResult.CONSUME;
                 }
-                if (!ws.getOwnerUUID().equals(serverPlayer.getUUID())) {
+                if (!WorkspaceAccessControl.canPlayerOpenMenu(serverPlayer, ws)) {
                     serverPlayer.sendSystemMessage(Component.translatable(
                                     "message.redstone_ai.protection_blocked", wsName,
                                     ws.getProtectionMode().getSerializedName())

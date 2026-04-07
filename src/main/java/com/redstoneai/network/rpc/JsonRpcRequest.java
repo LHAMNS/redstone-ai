@@ -80,4 +80,30 @@ public record JsonRpcRequest(
             return defaultValue;
         }
     }
+
+    public double getDoubleParam(String key) throws JsonRpcException {
+        if (params == null || !params.has(key)) throw new JsonRpcException(-32602, "Missing param: " + key);
+        JsonElement element = params.get(key);
+        if (!element.isJsonPrimitive()) {
+            throw new JsonRpcException(-32602, "Param '" + key + "' must be a number");
+        }
+        try {
+            return element.getAsDouble();
+        } catch (NumberFormatException | UnsupportedOperationException e) {
+            throw new JsonRpcException(-32602, "Param '" + key + "' must be a number");
+        }
+    }
+
+    public double getDoubleParam(String key, double defaultValue) {
+        if (params == null || !params.has(key)) return defaultValue;
+        JsonElement element = params.get(key);
+        if (!element.isJsonPrimitive()) {
+            return defaultValue;
+        }
+        try {
+            return element.getAsDouble();
+        } catch (NumberFormatException | UnsupportedOperationException e) {
+            return defaultValue;
+        }
+    }
 }

@@ -16,6 +16,8 @@ import com.redstoneai.recording.RecordingSummarizer;
 import com.redstoneai.recording.RecordingTimeline;
 import com.redstoneai.registry.RAIBlocks;
 import com.redstoneai.tick.TickController;
+import com.redstoneai.workspace.EntityFilterMode;
+import com.redstoneai.workspace.ProtectionMode;
 import com.redstoneai.workspace.Workspace;
 import com.redstoneai.workspace.WorkspaceControllerBlockEntity;
 import com.redstoneai.workspace.WorkspaceManager;
@@ -183,12 +185,7 @@ public final class RAICommands {
             }
         }
 
-        BoundingBox bounds = new BoundingBox(
-                controllerPos.getX(), controllerPos.getY(), controllerPos.getZ(),
-                controllerPos.getX() + sizeX - 1,
-                controllerPos.getY() + sizeY - 1,
-                controllerPos.getZ() + sizeZ - 1
-        );
+        BoundingBox bounds = resolveInitialBounds(controllerPos, sizeX, sizeY, sizeZ, level);
 
         String overlap = manager.checkOverlap(bounds);
         if (overlap != null) {
@@ -196,7 +193,31 @@ public final class RAICommands {
             return 0;
         }
 
-        Workspace ws = new Workspace(UUID.randomUUID(), player.getUUID(), name, controllerPos, bounds);
+        ProtectionMode protectionMode = ProtectionMode.AI_ONLY;
+        EntityFilterMode entityFilterMode = EntityFilterMode.ALL_NON_PLAYER;
+        if (level.getBlockEntity(controllerPos) instanceof WorkspaceControllerBlockEntity controller) {
+            protectionMode = controller.getProtectionMode();
+            entityFilterMode = controller.getEntityFilterMode();
+        }
+
+        Workspace ws = new Workspace(
+                UUID.randomUUID(),
+                player.getUUID(),
+                name,
+                controllerPos,
+                WorkspaceRules.originFromBounds(bounds),
+                bounds
+        );
+        ws.setProtectionMode(protectionMode);
+        ws.setEntityFilterMode(entityFilterMode);
+        if (level.getBlockEntity(controllerPos) instanceof WorkspaceControllerBlockEntity controller) {
+            ws.replaceAuthorizedPlayers(controller.getAuthorizedPlayers());
+            ws.replacePlayerPermissionGrants(controller.getPlayerPermissionGrants());
+            ws.setAllowVanillaCommands(controller.isAllowVanillaCommands());
+            ws.setAllowFrozenEntityTeleport(controller.isAllowFrozenEntityTeleport());
+            ws.setAllowFrozenEntityDamage(controller.isAllowFrozenEntityDamage());
+            ws.setAllowFrozenEntityCollision(controller.isAllowFrozenEntityCollision());
+        }
         manager.addWorkspace(ws);
 
         if (level.getBlockEntity(controllerPos) instanceof WorkspaceControllerBlockEntity be) {
@@ -289,8 +310,10 @@ public final class RAICommands {
         BoundingBox b = ws.getBounds();
         ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] " + ws.getName()).withStyle(ChatFormatting.GREEN), false);
         ctx.getSource().sendSuccess(() -> Component.literal("  Size: " + (b.maxX()-b.minX()+1) + "x" + (b.maxY()-b.minY()+1) + "x" + (b.maxZ()-b.minZ()+1)).withStyle(ChatFormatting.GRAY), false);
-        ctx.getSource().sendSuccess(() -> Component.literal("  Origin: " + ws.getControllerPos().toShortString()).withStyle(ChatFormatting.GRAY), false);
+        ctx.getSource().sendSuccess(() -> Component.literal("  Origin: " + ws.getOriginPos().toShortString()).withStyle(ChatFormatting.GRAY), false);
+        ctx.getSource().sendSuccess(() -> Component.literal("  Controller: " + ws.getControllerPos().toShortString()).withStyle(ChatFormatting.GRAY), false);
         ctx.getSource().sendSuccess(() -> Component.literal("  Mode: " + ws.getProtectionMode().getSerializedName()).withStyle(ChatFormatting.GRAY), false);
+        ctx.getSource().sendSuccess(() -> Component.literal("  Entity filter: " + ws.getEntityFilterMode().getSerializedName()).withStyle(ChatFormatting.GRAY), false);
         ctx.getSource().sendSuccess(() -> Component.literal("  Frozen: " + ws.isFrozen()).withStyle(ws.isFrozen() ? ChatFormatting.AQUA : ChatFormatting.GRAY), false);
         ctx.getSource().sendSuccess(() -> Component.literal("  Virtual tick: " + ws.getVirtualTick()).withStyle(ChatFormatting.GRAY), false);
         ctx.getSource().sendSuccess(() -> Component.literal("  IO markers: " + ws.getIOMarkers().size()).withStyle(ChatFormatting.GRAY), false);
@@ -535,7 +558,12 @@ public final class RAICommands {
                 : be;
 
         WorkspaceManager manager = WorkspaceManager.get(level);
-        manager.updateWorkspaceGeometry(ws, snapshot.getBounds(), restoredControllerPos);
+        manager.updateWorkspaceGeometry(
+                ws,
+                snapshot.getBounds(),
+                restoredControllerPos,
+                WorkspaceRules.originFromBounds(snapshot.getBounds())
+        );
         ws.setTimeline(null);
         ws.setVirtualTick(0);
         TickController.removeQueue(ws.getId());
@@ -543,7 +571,15 @@ public final class RAICommands {
             TickController.discardFrozenState(level, ws);
         }
 
-        restoredController.setInitialSnapshot(null);
+        ws.setProtectionMode(restoredController.getProtectionMode());
+        ws.setEntityFilterMode(restoredController.getEntityFilterMode());
+        ws.replaceAuthorizedPlayers(restoredController.getAuthorizedPlayers());
+        ws.replacePlayerPermissionGrants(restoredController.getPlayerPermissionGrants());
+        ws.setAllowVanillaCommands(restoredController.isAllowVanillaCommands());
+        ws.setAllowFrozenEntityTeleport(restoredController.isAllowFrozenEntityTeleport());
+        ws.setAllowFrozenEntityDamage(restoredController.isAllowFrozenEntityDamage());
+        ws.setAllowFrozenEntityCollision(restoredController.isAllowFrozenEntityCollision());
+        restoredController.setInitialSnapshot(snapshot);
         restoredController.getOperationLog().logSystem("revert", "Reverted " + changed + " blocks to initial state");
 
         ctx.getSource().sendSuccess(() ->
@@ -592,5 +628,15 @@ public final class RAICommands {
             }
         }
         return nearest;
+    }
+
+    private static BoundingBox resolveInitialBounds(BlockPos controllerPos, int sizeX, int sizeY, int sizeZ, ServerLevel level) {
+        if (level.getBlockEntity(controllerPos) instanceof WorkspaceControllerBlockEntity controller) {
+            InitialSnapshot snapshot = controller.getInitialSnapshot();
+            if (snapshot != null) {
+                return WorkspaceRules.resizeBounds(snapshot.getBounds(), controllerPos.getY(), sizeX, sizeY, sizeZ);
+            }
+        }
+        return WorkspaceRules.createBoundsFromController(controllerPos, sizeX, sizeY, sizeZ);
     }
 }

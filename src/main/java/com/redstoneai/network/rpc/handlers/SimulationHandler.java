@@ -4,6 +4,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.redstoneai.network.rpc.JsonRpcException;
 import com.redstoneai.network.rpc.JsonRpcRequest;
+import com.redstoneai.recording.TickSnapshot;
 import com.redstoneai.recording.RecordingSummarizer;
 import com.redstoneai.recording.RecordingTimeline;
 import com.redstoneai.tick.TickController;
@@ -12,6 +13,10 @@ import com.redstoneai.workspace.WorkspaceManager;
 import com.redstoneai.workspace.WorkspaceRules;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
 
 public class SimulationHandler {
 
@@ -126,6 +131,55 @@ public class SimulationHandler {
         return result;
     }
 
+    public JsonElement settle(JsonRpcRequest req, MinecraftServer server) throws JsonRpcException {
+        Workspace ws = getWorkspace(req, server);
+        requireApiOwned(ws);
+        enforceAiMutationAllowed(ws, "settle");
+        ServerLevel level = server.overworld();
+        if (!ws.isFrozen()) {
+            throw new JsonRpcException(-32602, "Must be frozen to settle");
+        }
+
+        int maxTicks = req.getIntParam("count", 20);
+        int quietTicks = Math.max(1, req.getIntParam("quietTicks", 2));
+        if (!WorkspaceRules.isValidTickCount(maxTicks)) {
+            throw new JsonRpcException(-32602, "Count exceeds configured maximum");
+        }
+        if (!WorkspaceRules.isValidTickCount(quietTicks)) {
+            throw new JsonRpcException(-32602, "quietTicks exceeds configured maximum");
+        }
+
+        int stepped = 0;
+        int stableTicks = 0;
+        while (stepped < maxTicks) {
+            TickController.step(level, ws, 1);
+            stepped++;
+
+            RecordingTimeline timeline = ws.getTimeline();
+            TickSnapshot latest = timeline != null ? timeline.getDelta(timeline.getCurrentIndex()) : null;
+            TickSnapshot previous = timeline != null && timeline.getCurrentIndex() > 0
+                    ? timeline.getDelta(timeline.getCurrentIndex() - 1)
+                    : null;
+            boolean stableTick = latest == null
+                    || (latest.blockChanges().isEmpty()
+                        && !hasEntityStateChanges(latest)
+                        && isQueueQuiet(latest)
+                        && (previous == null || latest.ioPowerLevels().equals(previous.ioPowerLevels())));
+            stableTicks = stableTick ? stableTicks + 1 : 0;
+            if (stableTicks >= quietTicks) {
+                break;
+            }
+        }
+
+        JsonObject result = new JsonObject();
+        result.addProperty("stepped", stepped);
+        result.addProperty("stable", stableTicks >= quietTicks);
+        result.addProperty("quietTicks", quietTicks);
+        result.addProperty("virtualTick", ws.getVirtualTick());
+        result.addProperty("summary", RecordingSummarizer.level1(ws));
+        return result;
+    }
+
     private Workspace getWorkspace(JsonRpcRequest req, MinecraftServer server) throws JsonRpcException {
         String name = req.getStringParam("workspace");
         ServerLevel level = server.overworld();
@@ -147,5 +201,45 @@ public class SimulationHandler {
             throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
                     "This RPC operation is only allowed on API-owned workspaces");
         }
+    }
+
+    private static boolean hasEntityStateChanges(TickSnapshot snapshot) {
+        if (snapshot.entityStatesBefore().size() != snapshot.entityStatesAfter().size()) {
+            return true;
+        }
+
+        Map<UUID, TickSnapshot.EntitySnapshot> before = indexEntityStates(snapshot.entityStatesBefore());
+        Map<UUID, TickSnapshot.EntitySnapshot> after = indexEntityStates(snapshot.entityStatesAfter());
+        if (!before.keySet().equals(after.keySet())) {
+            return true;
+        }
+
+        for (Map.Entry<UUID, TickSnapshot.EntitySnapshot> entry : before.entrySet()) {
+            TickSnapshot.EntitySnapshot afterSnapshot = after.get(entry.getKey());
+            if (afterSnapshot == null) {
+                return true;
+            }
+            if (!entry.getValue().fullNbt().equals(afterSnapshot.fullNbt())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static Map<UUID, TickSnapshot.EntitySnapshot> indexEntityStates(
+            java.util.List<TickSnapshot.EntitySnapshot> snapshots
+    ) {
+        Map<UUID, TickSnapshot.EntitySnapshot> indexed = new LinkedHashMap<>();
+        for (TickSnapshot.EntitySnapshot snapshot : snapshots) {
+            indexed.put(snapshot.entityUUID(), snapshot);
+        }
+        return indexed;
+    }
+
+    private static boolean isQueueQuiet(TickSnapshot snapshot) {
+        return snapshot.queueAfter().blockTicks().isEmpty()
+                && snapshot.queueAfter().fluidTicks().isEmpty()
+                && snapshot.queueAfter().blockEvents().isEmpty()
+                && snapshot.queueAfter().neighborUpdates().isEmpty();
     }
 }

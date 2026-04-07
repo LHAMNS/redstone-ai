@@ -55,9 +55,9 @@ public final class WorkspaceChunkLoader {
      */
     public static void forceLoadWorkspace(ServerLevel level, Workspace ws) {
         Set<ChunkPos> chunks = getWorkspaceChunks(ws);
-        BlockPos controllerPos = ws.getControllerPos();
+        BlockPos ticketAnchor = ws.getOriginPos();
         for (ChunkPos chunk : chunks) {
-            ForgeChunkManager.forceChunk(level, RedstoneAI.ID, controllerPos, chunk.x, chunk.z, true, true);
+            ForgeChunkManager.forceChunk(level, RedstoneAI.ID, ticketAnchor, chunk.x, chunk.z, true, true);
         }
         RedstoneAI.LOGGER.debug("[RedstoneAI] Force-loaded {} chunk(s) for workspace '{}'",
                 chunks.size(), ws.getName());
@@ -68,9 +68,9 @@ public final class WorkspaceChunkLoader {
      */
     public static void unloadWorkspace(ServerLevel level, Workspace ws) {
         Set<ChunkPos> chunks = getWorkspaceChunks(ws);
-        BlockPos controllerPos = ws.getControllerPos();
+        BlockPos ticketAnchor = ws.getOriginPos();
         for (ChunkPos chunk : chunks) {
-            ForgeChunkManager.forceChunk(level, RedstoneAI.ID, controllerPos, chunk.x, chunk.z, false, true);
+            ForgeChunkManager.forceChunk(level, RedstoneAI.ID, ticketAnchor, chunk.x, chunk.z, false, true);
         }
         RedstoneAI.LOGGER.debug("[RedstoneAI] Released {} chunk(s) for workspace '{}'",
                 chunks.size(), ws.getName());

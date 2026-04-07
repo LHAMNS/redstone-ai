@@ -1,5 +1,7 @@
 package com.redstoneai.workspace;
 
+import com.redstoneai.network.RAINetwork;
+import com.redstoneai.network.SelectionPreviewSyncPacket;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -7,6 +9,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import com.redstoneai.tick.TickController;
+import net.minecraftforge.network.PacketDistributor;
 
 import javax.annotation.Nullable;
 import java.util.HashMap;
@@ -37,6 +40,7 @@ public final class SelectionManager {
      */
     public static void beginSelection(ServerPlayer player, BlockPos controllerPos, String workspaceName) {
         activeSelections.put(player.getUUID(), new SelectionState(controllerPos, workspaceName, null));
+        syncPreview(player);
         player.sendSystemMessage(Component.translatable("message.redstone_ai.select_mode_enter")
                 .withStyle(ChatFormatting.AQUA));
     }
@@ -46,6 +50,7 @@ public final class SelectionManager {
      */
     public static void cancelSelection(ServerPlayer player) {
         if (activeSelections.remove(player.getUUID()) != null) {
+            syncPreview(player);
             player.sendSystemMessage(Component.translatable("message.redstone_ai.select_mode_cancel")
                     .withStyle(ChatFormatting.YELLOW));
         }
@@ -94,6 +99,7 @@ public final class SelectionManager {
 
         if (state.corner1 == null) {
             activeSelections.put(player.getUUID(), new SelectionState(state.controllerPos, state.workspaceName, clickedPos));
+            syncPreview(player);
             player.sendSystemMessage(Component.translatable("message.redstone_ai.select_mode_first",
                     clickedPos.toShortString()).withStyle(ChatFormatting.GREEN));
             return true;
@@ -115,9 +121,16 @@ public final class SelectionManager {
         }
 
         activeSelections.remove(player.getUUID());
+        syncPreview(player);
 
-        int baseY = state.controllerPos.getY();
-        BoundingBox bounds = new BoundingBox(minX, baseY, minZ, maxX, baseY + sizeY - 1, maxZ);
+        BoundingBox bounds = new BoundingBox(
+                minX,
+                state.controllerPos.getY() - sizeY,
+                minZ,
+                maxX,
+                state.controllerPos.getY() - 1,
+                maxZ
+        );
         BlockPos finalControllerPos = state.controllerPos;
         WorkspaceControllerBlockEntity targetController = controller;
 
@@ -140,7 +153,7 @@ public final class SelectionManager {
 
         if (workspace != null) {
             WorkspaceManager manager = WorkspaceManager.get(level);
-            manager.updateWorkspaceGeometry(workspace, bounds, finalControllerPos);
+            manager.updateWorkspaceGeometry(workspace, bounds, finalControllerPos, WorkspaceRules.originFromBounds(bounds));
         }
 
         targetController.setSize(sizeX, sizeY, sizeZ);
@@ -152,8 +165,8 @@ public final class SelectionManager {
         }
 
         player.sendSystemMessage(Component.translatable("message.redstone_ai.select_mode_done",
-                        new BlockPos(minX, c1.getY(), minZ).toShortString(),
-                        new BlockPos(maxX, c1.getY(), maxZ).toShortString())
+                        new BlockPos(minX, bounds.minY(), minZ).toShortString(),
+                        new BlockPos(maxX, bounds.maxY(), maxZ).toShortString())
                 .withStyle(ChatFormatting.GREEN));
         return true;
     }
@@ -172,7 +185,30 @@ public final class SelectionManager {
 
     private static boolean failSelection(ServerPlayer player, String message) {
         activeSelections.remove(player.getUUID());
+        syncPreview(player);
         player.sendSystemMessage(Component.literal(message).withStyle(ChatFormatting.RED));
         return true;
+    }
+
+    private static void syncPreview(ServerPlayer player) {
+        SelectionState state = activeSelections.get(player.getUUID());
+        if (state == null) {
+            RAINetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player),
+                    new SelectionPreviewSyncPacket(player.serverLevel().dimension().location(), BlockPos.ZERO, null, 0, false));
+            return;
+        }
+
+        int sizeY = 8;
+        if (player.serverLevel().getBlockEntity(state.controllerPos) instanceof WorkspaceControllerBlockEntity controller) {
+            sizeY = controller.getSizeY();
+        }
+        RAINetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player),
+                new SelectionPreviewSyncPacket(
+                        player.serverLevel().dimension().location(),
+                        state.controllerPos,
+                        state.corner1,
+                        sizeY,
+                        true
+                ));
     }
 }

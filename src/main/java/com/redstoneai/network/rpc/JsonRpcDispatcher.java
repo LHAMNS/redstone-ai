@@ -29,6 +29,11 @@ public class JsonRpcDispatcher {
         register("workspace.delete", wsHandler::delete);
         register("workspace.list", wsHandler::list);
         register("workspace.info", wsHandler::info);
+        register("workspace.configure", wsHandler::configure);
+        register("workspace.history", wsHandler::history);
+        register("workspace.baseline_diff", wsHandler::baselineDiff);
+        register("workspace.revert", wsHandler::revert);
+        register("workspace.scan", wsHandler::scan);
         register("workspace.clear", wsHandler::clear);
         register("workspace.set_mode", wsHandler::setMode);
 
@@ -42,6 +47,7 @@ public class JsonRpcDispatcher {
         register("sim.step", simHandler::step);
         register("sim.rewind", simHandler::rewind);
         register("sim.ff", simHandler::fastForward);
+        register("sim.settle", simHandler::settle);
         register("sim.summary", simHandler::summary);
         register("sim.timing", simHandler::timing);
         register("sim.detail", simHandler::detail);
@@ -51,6 +57,17 @@ public class JsonRpcDispatcher {
         register("io.unmark", ioHandler::unmark);
         register("io.list", ioHandler::list);
         register("io.status", ioHandler::status);
+        register("io.drive", ioHandler::drive);
+        register("io.clear_inputs", ioHandler::clearInputs);
+
+        BlockEntityHandler blockEntityHandler = new BlockEntityHandler();
+        register("block_entity.write", blockEntityHandler::write);
+
+        EntityHandler entityHandler = new EntityHandler();
+        register("entity.spawn", entityHandler::spawn);
+        register("entity.update", entityHandler::update);
+        register("entity.remove", entityHandler::remove);
+        register("entity.clear", entityHandler::clear);
 
         TestHandler testHandler = new TestHandler();
         register("test.run", testHandler::run);

@@ -28,6 +28,7 @@ import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.gametest.ForgeGameTestHooks;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,6 +65,10 @@ public class RedstoneAI {
     }
 
     private void onServerStarted(ServerStartedEvent event) {
+        if (ForgeGameTestHooks.isGametestServer()) {
+            LOGGER.info("[RedstoneAI] Skipping WebSocket server startup in GameTest mode");
+            return;
+        }
         int port = RAIConfig.SERVER.webSocketPort.get();
         String bindHost = RAIConfig.SERVER.webSocketBindAddress.get();
         WebSocketServer.start(event.getServer(), port, bindHost);

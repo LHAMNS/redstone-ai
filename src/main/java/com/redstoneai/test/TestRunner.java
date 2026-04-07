@@ -8,6 +8,7 @@ import com.redstoneai.tick.FrozenTickQueue;
 import com.redstoneai.tick.TickController;
 import com.redstoneai.workspace.InitialSnapshot;
 import com.redstoneai.workspace.Workspace;
+import com.redstoneai.workspace.WorkspaceSignalController;
 import com.redstoneai.workspace.WorkspaceRules;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -15,9 +16,6 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.LeverBlock;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 
 import javax.annotation.Nullable;
@@ -117,31 +115,14 @@ public final class TestRunner {
     }
 
     private static void applyInputs(ServerLevel level, Workspace ws, Map<String, Integer> inputs) {
-        boolean changedInputs = false;
-        for (var entry : inputs.entrySet()) {
-            String label = entry.getKey();
-            int power = entry.getValue();
-            IOMarker marker = ws.getIOMarkers().stream()
-                    .filter(m -> m.label().equals(label) && m.role() == IOMarker.IORole.INPUT)
-                    .findFirst().orElse(null);
-            if (marker != null && !ws.isControllerPos(marker.pos())) {
-                setSignal(level, marker.pos(), power);
-                changedInputs = true;
-            }
+        if (inputs.isEmpty()) {
+            return;
         }
-        if (changedInputs) {
-            TickController.invalidateRecording(level, ws);
-        }
+        WorkspaceSignalController.setInputs(level, ws, inputs);
     }
 
     private static Map<String, Integer> readOutputs(ServerLevel level, Workspace ws) {
-        Map<String, Integer> outputs = new LinkedHashMap<>();
-        for (IOMarker marker : ws.getIOMarkers()) {
-            if (marker.role() == IOMarker.IORole.OUTPUT && !ws.isControllerPos(marker.pos())) {
-                outputs.put(marker.label(), level.getBestNeighborSignal(marker.pos()));
-            }
-        }
-        return outputs;
+        return new LinkedHashMap<>(WorkspaceSignalController.readSignals(level, ws, IOMarker.IORole.OUTPUT));
     }
 
     private static boolean checkExpected(Map<String, Integer> expected, Map<String, Integer> actual) {
@@ -152,21 +133,6 @@ public final class TestRunner {
             }
         }
         return true;
-    }
-
-    private static void setSignal(ServerLevel level, BlockPos pos, int power) {
-        BlockState current = level.getBlockState(pos);
-        if (current.is(Blocks.LEVER)) {
-            boolean shouldBePowered = power > 0;
-            boolean isPowered = current.getValue(LeverBlock.POWERED);
-            if (shouldBePowered != isPowered) {
-                level.setBlock(pos, current.setValue(LeverBlock.POWERED, shouldBePowered), 3);
-            }
-        } else if (power > 0) {
-            level.setBlock(pos, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3);
-        } else {
-            level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
-        }
     }
 
     private static void prepareIsolatedRun(ServerLevel level,

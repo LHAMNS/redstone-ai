@@ -6,12 +6,13 @@ import com.google.gson.JsonObject;
 import com.redstoneai.network.rpc.JsonRpcException;
 import com.redstoneai.network.rpc.JsonRpcRequest;
 import com.redstoneai.recording.IOMarker;
-import com.redstoneai.workspace.Workspace;
-import com.redstoneai.workspace.WorkspaceManager;
-import com.redstoneai.workspace.WorkspaceRules;
+import com.redstoneai.workspace.*;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 public class IOHandler {
 
@@ -29,7 +30,7 @@ public class IOHandler {
         String role = req.getStringParam("role");
         String label = req.getStringParam("label");
 
-        BlockPos worldPos = ws.getControllerPos().offset(x, y, z);
+        BlockPos worldPos = ws.toWorldPos(x, y, z);
         if (ws.isControllerPos(worldPos)) {
             throw new JsonRpcException(-32602, "Position out of bounds or is the controller block");
         }
@@ -63,7 +64,7 @@ public class IOHandler {
         int y = req.getIntParam("y");
         int z = req.getIntParam("z");
 
-        BlockPos worldPos = ws.getControllerPos().offset(x, y, z);
+        BlockPos worldPos = ws.toWorldPos(x, y, z);
         if (ws.isControllerPos(worldPos)) {
             throw new JsonRpcException(-32602, "Position out of bounds or is the controller block");
         }
@@ -88,7 +89,7 @@ public class IOHandler {
             JsonObject obj = new JsonObject();
             obj.addProperty("label", m.label());
             obj.addProperty("role", m.role().getSerializedName());
-            BlockPos rel = m.pos().subtract(ws.getControllerPos());
+            BlockPos rel = ws.toRelativePos(m.pos());
             obj.addProperty("x", rel.getX());
             obj.addProperty("y", rel.getY());
             obj.addProperty("z", rel.getZ());
@@ -104,13 +105,54 @@ public class IOHandler {
         ServerLevel level = server.overworld();
 
         JsonObject result = new JsonObject();
-        for (IOMarker m : ws.getIOMarkers()) {
-            if (ws.isControllerPos(m.pos())) {
-                continue;
-            }
-            int power = level.getBestNeighborSignal(m.pos());
-            result.addProperty(m.label(), power);
+        for (var entry : WorkspaceSignalController.readSignals(level, ws, null).entrySet()) {
+            result.addProperty(entry.getKey(), entry.getValue());
         }
+        return result;
+    }
+
+    public JsonElement drive(JsonRpcRequest req, MinecraftServer server) throws JsonRpcException {
+        Workspace ws = getWorkspace(req, server);
+        requireApiOwned(ws);
+        if (!WorkspaceRules.canAiModify(ws)) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                    "Workspace mode '" + ws.getProtectionMode().getSerializedName() + "' does not allow AI mutation");
+        }
+        ServerLevel level = server.overworld();
+        Map<String, Integer> inputs = parseInputValues(req);
+        try {
+            WorkspaceSignalController.setInputs(level, ws, inputs);
+        } catch (IllegalArgumentException e) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS, e.getMessage());
+        }
+
+        JsonObject result = new JsonObject();
+        result.addProperty("driven", inputs.size());
+        JsonObject status = new JsonObject();
+        for (var entry : WorkspaceSignalController.readSignals(level, ws, null).entrySet()) {
+            status.addProperty(entry.getKey(), entry.getValue());
+        }
+        result.add("status", status);
+        return result;
+    }
+
+    public JsonElement clearInputs(JsonRpcRequest req, MinecraftServer server) throws JsonRpcException {
+        Workspace ws = getWorkspace(req, server);
+        requireApiOwned(ws);
+        if (!WorkspaceRules.canAiModify(ws)) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                    "Workspace mode '" + ws.getProtectionMode().getSerializedName() + "' does not allow AI mutation");
+        }
+        ServerLevel level = server.overworld();
+        WorkspaceSignalController.clearInputs(level, ws);
+
+        JsonObject result = new JsonObject();
+        result.addProperty("clearedInputs", true);
+        JsonObject status = new JsonObject();
+        for (var entry : WorkspaceSignalController.readSignals(level, ws, null).entrySet()) {
+            status.addProperty(entry.getKey(), entry.getValue());
+        }
+        result.add("status", status);
         return result;
     }
 
@@ -126,6 +168,44 @@ public class IOHandler {
         if (!WorkspaceRules.API_OWNER.equals(ws.getOwnerUUID())) {
             throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
                     "RPC IO operations are only allowed on API-owned workspaces");
+        }
+    }
+
+    private Map<String, Integer> parseInputValues(JsonRpcRequest req) throws JsonRpcException {
+        JsonObject params = req.params() != null ? req.params() : new JsonObject();
+        Map<String, Integer> inputs = new LinkedHashMap<>();
+        if (params.has("label")) {
+            String label = req.getStringParam("label");
+            int power = req.getIntParam("power", 15);
+            validatePower(label, power);
+            inputs.put(label, power);
+            return inputs;
+        }
+        if (!params.has("values") || !params.get("values").isJsonObject()) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                    "Provide either label/power or a values object");
+        }
+        JsonObject values = params.getAsJsonObject("values");
+        for (var entry : values.entrySet()) {
+            try {
+                int power = entry.getValue().getAsInt();
+                validatePower(entry.getKey(), power);
+                inputs.put(entry.getKey(), power);
+            } catch (RuntimeException e) {
+                throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                        "Input value for '" + entry.getKey() + "' must be an integer");
+            }
+        }
+        if (inputs.isEmpty()) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS, "values must contain at least one input");
+        }
+        return inputs;
+    }
+
+    private void validatePower(String label, int power) throws JsonRpcException {
+        if (power < 0 || power > 15) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                    "Input value for '" + label + "' must be between 0 and 15");
         }
     }
 }

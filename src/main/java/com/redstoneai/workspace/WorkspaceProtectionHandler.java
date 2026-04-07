@@ -7,6 +7,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
+import net.minecraftforge.event.entity.player.AttackEntityEvent;
+import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.event.level.ExplosionEvent;
 import net.minecraftforge.eventbus.api.EventPriority;
@@ -32,7 +34,6 @@ import net.minecraftforge.fml.common.Mod;
  */
 @Mod.EventBusSubscriber(modid = RedstoneAI.ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class WorkspaceProtectionHandler {
-
     private WorkspaceProtectionHandler() {}
 
     @SubscribeEvent(priority = EventPriority.HIGH)
@@ -45,7 +46,7 @@ public final class WorkspaceProtectionHandler {
         Workspace ws = manager.getWorkspaceAt(pos);
         if (ws == null) return;
 
-        if (!ws.getProtectionMode().canPlayerModify()) {
+        if (!WorkspaceAccessControl.canPlayerModify(player, ws)) {
             event.setCanceled(true);
             player.sendSystemMessage(
                     Component.literal("[RedstoneAI] Cannot place blocks - workspace '" + ws.getName() +
@@ -61,6 +62,20 @@ public final class WorkspaceProtectionHandler {
         Player player = event.getPlayer();
         BlockPos pos = event.getPos();
         WorkspaceManager manager = WorkspaceManager.get(level);
+        Workspace controllerWorkspace = manager.getByControllerPos(pos);
+        if (controllerWorkspace != null) {
+            if (!(player instanceof ServerPlayer sp) || !WorkspaceRules.canPlayerManage(sp, controllerWorkspace)) {
+                event.setCanceled(true);
+                if (player instanceof ServerPlayer serverPlayer) {
+                    serverPlayer.sendSystemMessage(
+                            Component.literal("[RedstoneAI] Only the owner or an operator can break a workspace controller.")
+                                    .withStyle(ChatFormatting.RED));
+                }
+                return;
+            }
+            return;
+        }
+
         Workspace ws = manager.getWorkspaceAt(pos);
         if (ws == null) return;
 
@@ -76,7 +91,7 @@ public final class WorkspaceProtectionHandler {
             }
         }
 
-        if (!ws.getProtectionMode().canPlayerModify()) {
+        if (!(player instanceof ServerPlayer sp) || !WorkspaceAccessControl.canPlayerModify(sp, ws)) {
             event.setCanceled(true);
             if (player instanceof ServerPlayer sp) {
                 sp.sendSystemMessage(
@@ -109,5 +124,71 @@ public final class WorkspaceProtectionHandler {
             Workspace ws = manager.getWorkspaceAt(pos);
             return ws != null && !ws.getProtectionMode().canPlayerModify();
         });
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
+        if (!(event.getLevel() instanceof ServerLevel level)) return;
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        Workspace ws = WorkspaceManager.get(level).getWorkspaceAt(event.getPos());
+        if (ws == null) return;
+        if (!WorkspaceAccessControl.canPlayerInteract(player, ws)) {
+            event.setCanceled(true);
+            player.sendSystemMessage(Component.literal("[RedstoneAI] Interaction blocked inside protected workspace '" + ws.getName() + "'.")
+                    .withStyle(ChatFormatting.RED));
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public static void onLeftClickBlock(PlayerInteractEvent.LeftClickBlock event) {
+        if (!(event.getLevel() instanceof ServerLevel level)) return;
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        Workspace ws = WorkspaceManager.get(level).getWorkspaceAt(event.getPos());
+        if (ws == null) return;
+        if (!WorkspaceAccessControl.canPlayerInteract(player, ws)) {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public static void onEntityInteract(PlayerInteractEvent.EntityInteract event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        if (!(player.level() instanceof ServerLevel level)) return;
+        Workspace ws = WorkspaceAccessControl.findFrozenWorkspaceForEntity(event.getTarget());
+        if (ws == null) {
+            ws = WorkspaceManager.get(level).getWorkspaceAt(event.getTarget().blockPosition());
+        }
+        if (ws == null) return;
+        if (!WorkspaceAccessControl.canPlayerInteract(player, ws)) {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public static void onEntityInteractSpecific(PlayerInteractEvent.EntityInteractSpecific event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        if (!(player.level() instanceof ServerLevel level)) return;
+        Workspace ws = WorkspaceAccessControl.findFrozenWorkspaceForEntity(event.getTarget());
+        if (ws == null) {
+            ws = WorkspaceManager.get(level).getWorkspaceAt(event.getTarget().blockPosition());
+        }
+        if (ws == null) return;
+        if (!WorkspaceAccessControl.canPlayerInteract(player, ws)) {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public static void onAttackEntity(AttackEntityEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        if (!(player.level() instanceof ServerLevel level)) return;
+        Workspace ws = WorkspaceAccessControl.findFrozenWorkspaceForEntity(event.getTarget());
+        if (ws == null) {
+            ws = WorkspaceManager.get(level).getWorkspaceAt(event.getTarget().blockPosition());
+        }
+        if (ws == null) return;
+        if (!WorkspaceAccessControl.canPlayerInteract(player, ws)) {
+            event.setCanceled(true);
+        }
     }
 }

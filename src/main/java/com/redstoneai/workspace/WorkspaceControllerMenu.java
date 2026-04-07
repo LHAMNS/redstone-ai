@@ -43,6 +43,14 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
     private boolean frozen;
     private int virtualTick;
     private int recordingLength;
+    private String protectionMode;
+    private String entityFilterMode;
+    private String authorizedPlayers;
+    private List<String> playerPermissionEntries;
+    private boolean allowVanillaCommands;
+    private boolean allowFrozenEntityTeleport;
+    private boolean allowFrozenEntityDamage;
+    private boolean allowFrozenEntityCollision;
     private boolean canViewHistory;
     private boolean hasWorkspaceBounds;
     private int boundsMinX;
@@ -72,6 +80,14 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
         this.frozen = false;
         this.virtualTick = 0;
         this.recordingLength = 0;
+        this.protectionMode = ProtectionMode.AI_ONLY.getSerializedName();
+        this.entityFilterMode = EntityFilterMode.ALL_NON_PLAYER.getSerializedName();
+        this.authorizedPlayers = "";
+        this.playerPermissionEntries = List.of();
+        this.allowVanillaCommands = false;
+        this.allowFrozenEntityTeleport = false;
+        this.allowFrozenEntityDamage = false;
+        this.allowFrozenEntityCollision = false;
         this.canViewHistory = false;
         this.hasWorkspaceBounds = false;
         this.boundsMinX = pos.getX();
@@ -89,7 +105,7 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
             String currentWorkspaceName = be.getWorkspaceName();
             if (!currentWorkspaceName.isEmpty()) {
                 workspace = WorkspaceManager.get(serverLevel).getByName(currentWorkspaceName);
-                visible = workspace != null && WorkspaceRules.canPlayerManage(opener, workspace);
+                visible = workspace != null && WorkspaceAccessControl.canPlayerOpenMenu(opener, workspace);
             }
         }
 
@@ -113,6 +129,19 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
         this.frozen = buf.readBoolean();
         this.virtualTick = buf.readInt();
         this.recordingLength = buf.readInt();
+        this.protectionMode = buf.readUtf(64);
+        this.entityFilterMode = buf.readUtf(64);
+        this.authorizedPlayers = buf.readUtf(512);
+        int permissionEntryCount = buf.readInt();
+        List<String> permissionEntries = new ArrayList<>(permissionEntryCount);
+        for (int i = 0; i < permissionEntryCount; i++) {
+            permissionEntries.add(buf.readUtf(512));
+        }
+        this.playerPermissionEntries = List.copyOf(permissionEntries);
+        this.allowVanillaCommands = buf.readBoolean();
+        this.allowFrozenEntityTeleport = buf.readBoolean();
+        this.allowFrozenEntityDamage = buf.readBoolean();
+        this.allowFrozenEntityCollision = buf.readBoolean();
         this.canViewHistory = buf.readBoolean();
         this.hasWorkspaceBounds = buf.readBoolean();
         if (hasWorkspaceBounds) {
@@ -162,6 +191,17 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
         buf.writeBoolean(frozen);
         buf.writeInt(virtualTick);
         buf.writeInt(recordingLength);
+        buf.writeUtf(protectionMode, 64);
+        buf.writeUtf(entityFilterMode, 64);
+        buf.writeUtf(authorizedPlayers, 512);
+        buf.writeInt(playerPermissionEntries.size());
+        for (String entry : playerPermissionEntries) {
+            buf.writeUtf(entry, 512);
+        }
+        buf.writeBoolean(allowVanillaCommands);
+        buf.writeBoolean(allowFrozenEntityTeleport);
+        buf.writeBoolean(allowFrozenEntityDamage);
+        buf.writeBoolean(allowFrozenEntityCollision);
         buf.writeBoolean(canViewHistory);
         buf.writeBoolean(hasWorkspaceBounds);
         if (hasWorkspaceBounds) {
@@ -210,6 +250,14 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
         this.frozen = packet.frozen();
         this.virtualTick = packet.virtualTick();
         this.recordingLength = packet.recordingLength();
+        this.protectionMode = packet.protectionMode();
+        this.entityFilterMode = packet.entityFilterMode();
+        this.authorizedPlayers = packet.authorizedPlayers();
+        this.playerPermissionEntries = packet.playerPermissionEntries().isEmpty() ? List.of() : List.copyOf(packet.playerPermissionEntries());
+        this.allowVanillaCommands = packet.allowVanillaCommands();
+        this.allowFrozenEntityTeleport = packet.allowFrozenEntityTeleport();
+        this.allowFrozenEntityDamage = packet.allowFrozenEntityDamage();
+        this.allowFrozenEntityCollision = packet.allowFrozenEntityCollision();
         this.canViewHistory = packet.canViewHistory();
         this.hasWorkspaceBounds = packet.hasWorkspaceBounds();
         if (hasWorkspaceBounds) {
@@ -241,7 +289,7 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
             workspace = WorkspaceManager.get(level).getByName(currentWorkspaceName);
         }
 
-        if (currentWorkspaceName.isEmpty() || workspace != null && WorkspaceRules.canPlayerManage(opener, workspace)) {
+        if (currentWorkspaceName.isEmpty() || workspace != null && WorkspaceAccessControl.canPlayerOpenMenu(opener, workspace)) {
             refreshFromServerState(controller, workspace);
         } else {
             setNeutralState();
@@ -261,25 +309,49 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
         this.sizeY = controller.getSizeY();
         this.sizeZ = controller.getSizeZ();
         this.hasSnapshot = controller.hasInitialSnapshot();
+        this.protectionMode = controller.getProtectionMode().getSerializedName();
+        this.entityFilterMode = controller.getEntityFilterMode().getSerializedName();
+        this.authorizedPlayers = WorkspaceAccessControl.formatAuthorizedPlayers(controller.getAuthorizedPlayers());
+        this.playerPermissionEntries = WorkspaceAccessControl.serializePermissionGrants(controller.getPlayerPermissionGrants());
+        this.allowVanillaCommands = controller.isAllowVanillaCommands();
+        this.allowFrozenEntityTeleport = controller.isAllowFrozenEntityTeleport();
+        this.allowFrozenEntityDamage = controller.isAllowFrozenEntityDamage();
+        this.allowFrozenEntityCollision = controller.isAllowFrozenEntityCollision();
 
         if (workspace != null) {
             this.frozen = workspace.isFrozen();
             this.virtualTick = workspace.getVirtualTick();
             this.recordingLength = workspace.getTimeline() != null ? workspace.getTimeline().getLength() : 0;
-            this.canViewHistory = true;
+            this.protectionMode = workspace.getProtectionMode().getSerializedName();
+            this.entityFilterMode = workspace.getEntityFilterMode().getSerializedName();
+            this.authorizedPlayers = WorkspaceAccessControl.formatAuthorizedPlayers(workspace.getAuthorizedPlayers());
+            this.playerPermissionEntries = WorkspaceAccessControl.serializePermissionGrants(workspace.getPlayerPermissionGrants());
+            this.allowVanillaCommands = workspace.isAllowVanillaCommands();
+            this.allowFrozenEntityTeleport = workspace.isAllowFrozenEntityTeleport();
+            this.allowFrozenEntityDamage = workspace.isAllowFrozenEntityDamage();
+            this.allowFrozenEntityCollision = workspace.isAllowFrozenEntityCollision();
+            this.canViewHistory = opener != null && WorkspaceAccessControl.canPlayerViewHistory(opener, workspace);
             setWorkspaceBounds(workspace.getBounds());
-            this.logLines = trimLast(controller.getOperationLog().getLastN(MAX_LOG_LINES), MAX_LOG_LINES).stream()
-                    .map(OperationLog.Entry::toDisplayString)
-                    .toList();
-            this.chatLines = trimLast(controller.getChatHistory(), MAX_CHAT_LINES).stream()
-                    .map(msg -> ("player".equals(msg.role()) ? "You: " : "AI: ") + msg.content())
-                    .toList();
+            this.logLines = this.canViewHistory
+                    ? trimLast(controller.getOperationLog().getLastN(MAX_LOG_LINES), MAX_LOG_LINES).stream()
+                        .map(OperationLog.Entry::toDisplayString)
+                        .toList()
+                    : List.of();
+            this.chatLines = this.canViewHistory
+                    ? trimLast(controller.getChatHistory(), MAX_CHAT_LINES).stream()
+                        .map(msg -> ("player".equals(msg.role()) ? "You: " : "AI: ") + msg.content())
+                        .toList()
+                    : List.of();
         } else {
             this.frozen = false;
             this.virtualTick = 0;
             this.recordingLength = 0;
             this.canViewHistory = false;
-            clearWorkspaceBounds();
+            if (this.workspaceName.isEmpty() && controller.getInitialSnapshot() != null) {
+                setWorkspaceBounds(controller.getInitialSnapshot().getBounds());
+            } else {
+                clearWorkspaceBounds();
+            }
             this.logLines = List.of();
             this.chatLines = List.of();
         }
@@ -294,6 +366,14 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
         this.frozen = false;
         this.virtualTick = 0;
         this.recordingLength = 0;
+        this.protectionMode = ProtectionMode.AI_ONLY.getSerializedName();
+        this.entityFilterMode = EntityFilterMode.ALL_NON_PLAYER.getSerializedName();
+        this.authorizedPlayers = "";
+        this.playerPermissionEntries = List.of();
+        this.allowVanillaCommands = false;
+        this.allowFrozenEntityTeleport = false;
+        this.allowFrozenEntityDamage = false;
+        this.allowFrozenEntityCollision = false;
         this.canViewHistory = false;
         clearWorkspaceBounds();
         this.logLines = List.of();
@@ -331,6 +411,14 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
                 frozen,
                 virtualTick,
                 recordingLength,
+                protectionMode,
+                entityFilterMode,
+                authorizedPlayers,
+                playerPermissionEntries,
+                allowVanillaCommands,
+                allowFrozenEntityTeleport,
+                allowFrozenEntityDamage,
+                allowFrozenEntityCollision,
                 canViewHistory,
                 hasWorkspaceBounds,
                 boundsMinX,
@@ -362,6 +450,23 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
     public boolean isFrozen() { return frozen; }
     public int getVirtualTick() { return virtualTick; }
     public int getRecordingLength() { return recordingLength; }
+    public String getProtectionMode() { return protectionMode; }
+    public String getEntityFilterMode() { return entityFilterMode; }
+    public String getAuthorizedPlayers() { return authorizedPlayers; }
+    public List<String> getPlayerPermissionEntries() { return playerPermissionEntries; }
+    public boolean hasPlayerPermission(String playerName, WorkspacePermission permission) {
+        String normalized = WorkspaceAccessControl.normalizePlayerName(playerName);
+        for (PlayerPermissionGrant grant : WorkspaceAccessControl.deserializePermissionGrants(playerPermissionEntries)) {
+            if (grant.playerName().equals(normalized)) {
+                return grant.has(permission);
+            }
+        }
+        return false;
+    }
+    public boolean isAllowVanillaCommands() { return allowVanillaCommands; }
+    public boolean isAllowFrozenEntityTeleport() { return allowFrozenEntityTeleport; }
+    public boolean isAllowFrozenEntityDamage() { return allowFrozenEntityDamage; }
+    public boolean isAllowFrozenEntityCollision() { return allowFrozenEntityCollision; }
     public boolean canViewHistory() { return canViewHistory; }
     public List<String> getLogLines() { return logLines; }
     public List<String> getChatLines() { return chatLines; }

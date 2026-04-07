@@ -9,6 +9,7 @@ import com.redstoneai.recording.StateRecorder;
 import com.redstoneai.recording.TickSnapshot;
 import com.redstoneai.network.WorkspaceBoundarySyncPacket;
 import com.redstoneai.workspace.Workspace;
+import com.redstoneai.workspace.WorkspaceBypassContext;
 import com.redstoneai.workspace.WorkspaceChunkLoader;
 import com.redstoneai.workspace.WorkspaceManager;
 import net.minecraft.core.BlockPos;
@@ -43,12 +44,27 @@ public final class TickController {
     private static final Field SERVER_LEVEL_BLOCK_EVENTS_FIELD;
 
     static {
-        // Use ObfuscationReflectionHelper with SRG names — Mojang-mapped names
-        // only work in dev; production JARs use SRG (f_xxxxx_) names.
-        LEVEL_TICKS_ALL_CONTAINERS_FIELD = net.minecraftforge.fml.util.ObfuscationReflectionHelper.findField(LevelTicks.class, "f_193800_");
-        LEVEL_TICKS_TO_RUN_FIELD = net.minecraftforge.fml.util.ObfuscationReflectionHelper.findField(LevelTicks.class, "f_193802_");
-        LEVEL_TICKS_ALREADY_RUN_FIELD = net.minecraftforge.fml.util.ObfuscationReflectionHelper.findField(LevelTicks.class, "f_193803_");
-        SERVER_LEVEL_BLOCK_EVENTS_FIELD = net.minecraftforge.fml.util.ObfuscationReflectionHelper.findField(ServerLevel.class, "f_8549_");
+        // Dev environment uses Mojang-mapped names; production uses SRG names.
+        // Try Mojang name first (dev), fall back to SRG name (production).
+        LEVEL_TICKS_ALL_CONTAINERS_FIELD = findFieldSafe(LevelTicks.class, "allContainers", "f_193800_");
+        LEVEL_TICKS_TO_RUN_FIELD = findFieldSafe(LevelTicks.class, "toRunThisTick", "f_193802_");
+        LEVEL_TICKS_ALREADY_RUN_FIELD = findFieldSafe(LevelTicks.class, "alreadyRunThisTick", "f_193803_");
+        SERVER_LEVEL_BLOCK_EVENTS_FIELD = findFieldSafe(ServerLevel.class, "blockEvents", "f_8549_");
+    }
+
+    private static Field findFieldSafe(Class<?> clazz, String mojangName, String srgName) {
+        try {
+            Field f = clazz.getDeclaredField(mojangName);
+            f.setAccessible(true);
+            return f;
+        } catch (NoSuchFieldException ignored) {}
+        try {
+            Field f = clazz.getDeclaredField(srgName);
+            f.setAccessible(true);
+            return f;
+        } catch (NoSuchFieldException e) {
+            throw new RuntimeException("Cannot find field " + mojangName + "/" + srgName + " in " + clazz.getName(), e);
+        }
     }
 
     private TickController() {}
@@ -413,7 +429,7 @@ public final class TickController {
         }
         for (Entity entity : currentEntities) {
             if (targetEntityIds.contains(entity.getUUID()) || ws.containsEntityFully(entity)) {
-                entity.discard();
+                WorkspaceBypassContext.runWithEntityRemovalBypass(entity::discard);
             }
         }
 

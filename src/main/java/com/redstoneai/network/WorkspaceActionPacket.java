@@ -11,6 +11,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraftforge.network.NetworkEvent;
 
+import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -29,7 +30,16 @@ public class WorkspaceActionPacket {
         STEP,
         REWIND,
         FAST_FORWARD,
-        SELECT_RANGE
+        SELECT_RANGE,
+        SET_PROTECTION_MODE,
+        SET_ENTITY_FILTER,
+        SET_AUTHORIZED_PLAYERS,
+        SET_PLAYER_PERMISSION,
+        REMOVE_PLAYER_PERMISSIONS,
+        SET_ALLOW_COMMANDS,
+        SET_ALLOW_FROZEN_TELEPORT,
+        SET_ALLOW_FROZEN_DAMAGE,
+        SET_ALLOW_FROZEN_COLLISION
     }
 
     private final BlockPos controllerPos;
@@ -88,6 +98,44 @@ public class WorkspaceActionPacket {
         return new WorkspaceActionPacket(pos, Action.SELECT_RANGE, 0, 0, 0, "");
     }
 
+    public static WorkspaceActionPacket setProtectionMode(BlockPos pos, String protectionMode) {
+        return new WorkspaceActionPacket(pos, Action.SET_PROTECTION_MODE, 0, 0, 0, protectionMode);
+    }
+
+    public static WorkspaceActionPacket setEntityFilter(BlockPos pos, String entityFilterMode) {
+        return new WorkspaceActionPacket(pos, Action.SET_ENTITY_FILTER, 0, 0, 0, entityFilterMode);
+    }
+
+    public static WorkspaceActionPacket setAuthorizedPlayers(BlockPos pos, String authorizedPlayers) {
+        return new WorkspaceActionPacket(pos, Action.SET_AUTHORIZED_PLAYERS, 0, 0, 0, authorizedPlayers);
+    }
+
+    public static WorkspaceActionPacket setPlayerPermission(BlockPos pos, String playerName, WorkspacePermission permission, boolean enabled) {
+        return new WorkspaceActionPacket(pos, Action.SET_PLAYER_PERMISSION, enabled ? 1 : 0, 0, 0,
+                WorkspaceAccessControl.normalizePlayerName(playerName) + "|" + permission.getSerializedName());
+    }
+
+    public static WorkspaceActionPacket removePlayerPermissions(BlockPos pos, String playerName) {
+        return new WorkspaceActionPacket(pos, Action.REMOVE_PLAYER_PERMISSIONS, 0, 0, 0,
+                WorkspaceAccessControl.normalizePlayerName(playerName));
+    }
+
+    public static WorkspaceActionPacket setAllowCommands(BlockPos pos, boolean enabled) {
+        return new WorkspaceActionPacket(pos, Action.SET_ALLOW_COMMANDS, enabled ? 1 : 0, 0, 0, "");
+    }
+
+    public static WorkspaceActionPacket setAllowFrozenTeleport(BlockPos pos, boolean enabled) {
+        return new WorkspaceActionPacket(pos, Action.SET_ALLOW_FROZEN_TELEPORT, enabled ? 1 : 0, 0, 0, "");
+    }
+
+    public static WorkspaceActionPacket setAllowFrozenDamage(BlockPos pos, boolean enabled) {
+        return new WorkspaceActionPacket(pos, Action.SET_ALLOW_FROZEN_DAMAGE, enabled ? 1 : 0, 0, 0, "");
+    }
+
+    public static WorkspaceActionPacket setAllowFrozenCollision(BlockPos pos, boolean enabled) {
+        return new WorkspaceActionPacket(pos, Action.SET_ALLOW_FROZEN_COLLISION, enabled ? 1 : 0, 0, 0, "");
+    }
+
     public void encode(FriendlyByteBuf buf) {
         buf.writeBlockPos(controllerPos);
         buf.writeEnum(action);
@@ -133,6 +181,15 @@ public class WorkspaceActionPacket {
                 case REWIND -> handleRewind(player, level, controller);
                 case FAST_FORWARD -> handleFastForward(player, level, controller);
                 case SELECT_RANGE -> handleSelectRange(player, level, controller);
+                case SET_PROTECTION_MODE -> handleSetProtectionMode(player, level, controller);
+                case SET_ENTITY_FILTER -> handleSetEntityFilter(player, level, controller);
+                case SET_AUTHORIZED_PLAYERS -> handleSetAuthorizedPlayers(player, level, controller);
+                case SET_PLAYER_PERMISSION -> handleSetPlayerPermission(player, level, controller);
+                case REMOVE_PLAYER_PERMISSIONS -> handleRemovePlayerPermissions(player, level, controller);
+                case SET_ALLOW_COMMANDS -> handleSetAllowCommands(player, level, controller);
+                case SET_ALLOW_FROZEN_TELEPORT -> handleSetAllowFrozenTeleport(player, level, controller);
+                case SET_ALLOW_FROZEN_DAMAGE -> handleSetAllowFrozenDamage(player, level, controller);
+                case SET_ALLOW_FROZEN_COLLISION -> handleSetAllowFrozenCollision(player, level, controller);
             }
         });
         ctx.setPacketHandled(true);
@@ -150,27 +207,23 @@ public class WorkspaceActionPacket {
                 return;
             }
             controller.setSize(sizeX, sizeY, sizeZ);
+            controller.setInitialSnapshot(null);
             controller.getOperationLog().logPlayer("config", "Pending size set to " + sizeX + "x" + sizeY + "x" + sizeZ);
             return;
         }
 
-        if (!WorkspaceRules.canPlayerManage(player, workspace) || workspace.isFrozen()) {
+        if (!WorkspaceAccessControl.canPlayerManageSettings(player, workspace) || workspace.isFrozen()) {
             return;
         }
 
         WorkspaceManager manager = WorkspaceManager.get(level);
-        BoundingBox newBounds = new BoundingBox(
-                controllerPos.getX(), controllerPos.getY(), controllerPos.getZ(),
-                controllerPos.getX() + sizeX - 1,
-                controllerPos.getY() + sizeY - 1,
-                controllerPos.getZ() + sizeZ - 1
-        );
+        BoundingBox newBounds = WorkspaceRules.resizeBounds(workspace.getBounds(), controllerPos.getY(), sizeX, sizeY, sizeZ);
         if (manager.checkOverlap(newBounds, workspace.getId()) != null) {
             return;
         }
 
         controller.setSize(sizeX, sizeY, sizeZ);
-        manager.updateWorkspaceGeometry(workspace, newBounds, null);
+        manager.updateWorkspaceGeometry(workspace, newBounds, null, WorkspaceRules.originFromBounds(newBounds));
         controller.setInitialSnapshot(InitialSnapshot.capture(level, newBounds));
         workspace.retainIOMarkers(marker -> workspace.contains(marker.pos()));
         TickController.invalidateRecording(level, workspace);
@@ -197,27 +250,37 @@ public class WorkspaceActionPacket {
             return;
         }
 
-        BoundingBox bounds = new BoundingBox(
-                controllerPos.getX(), controllerPos.getY(), controllerPos.getZ(),
-                controllerPos.getX() + sizeX - 1,
-                controllerPos.getY() + sizeY - 1,
-                controllerPos.getZ() + sizeZ - 1
-        );
+        BoundingBox bounds = resolveInitialBounds(controller, sizeX, sizeY, sizeZ);
         if (manager.checkOverlap(bounds) != null) {
             return;
         }
 
-        Workspace workspace = new Workspace(UUID.randomUUID(), player.getUUID(), name, controllerPos, bounds);
+        Workspace workspace = new Workspace(
+                UUID.randomUUID(),
+                player.getUUID(),
+                name,
+                controllerPos,
+                WorkspaceRules.originFromBounds(bounds),
+                bounds
+        );
         manager.addWorkspace(workspace);
         controller.setWorkspaceName(name);
         controller.setSize(sizeX, sizeY, sizeZ);
+        workspace.setProtectionMode(controller.getProtectionMode());
+        workspace.setEntityFilterMode(controller.getEntityFilterMode());
+        workspace.replaceAuthorizedPlayers(controller.getAuthorizedPlayers());
+        workspace.replacePlayerPermissionGrants(controller.getPlayerPermissionGrants());
+        workspace.setAllowVanillaCommands(controller.isAllowVanillaCommands());
+        workspace.setAllowFrozenEntityTeleport(controller.isAllowFrozenEntityTeleport());
+        workspace.setAllowFrozenEntityDamage(controller.isAllowFrozenEntityDamage());
+        workspace.setAllowFrozenEntityCollision(controller.isAllowFrozenEntityCollision());
         controller.setInitialSnapshot(InitialSnapshot.capture(level, bounds));
         controller.getOperationLog().logSystem("create", "Workspace '" + name + "' created");
     }
 
     private void handleRevert(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
         Workspace workspace = getBoundWorkspace(level, controller);
-        if (workspace == null || !WorkspaceRules.canPlayerManage(player, workspace)) {
+        if (workspace == null || !WorkspaceAccessControl.canPlayerManageSettings(player, workspace)) {
             return;
         }
 
@@ -235,20 +298,33 @@ public class WorkspaceActionPacket {
                 : controller;
 
         WorkspaceManager manager = WorkspaceManager.get(level);
-        manager.updateWorkspaceGeometry(workspace, snapshot.getBounds(), restoredControllerPos);
+        manager.updateWorkspaceGeometry(
+                workspace,
+                snapshot.getBounds(),
+                restoredControllerPos,
+                WorkspaceRules.originFromBounds(snapshot.getBounds())
+        );
         workspace.setTimeline(null);
         workspace.setVirtualTick(0);
         TickController.removeQueue(workspace.getId());
         if (wasFrozen) {
             TickController.discardFrozenState(level, workspace);
         }
-        restoredController.setInitialSnapshot(null);
+        workspace.setProtectionMode(restoredController.getProtectionMode());
+        workspace.setEntityFilterMode(restoredController.getEntityFilterMode());
+        workspace.replaceAuthorizedPlayers(restoredController.getAuthorizedPlayers());
+        workspace.replacePlayerPermissionGrants(restoredController.getPlayerPermissionGrants());
+        workspace.setAllowVanillaCommands(restoredController.isAllowVanillaCommands());
+        workspace.setAllowFrozenEntityTeleport(restoredController.isAllowFrozenEntityTeleport());
+        workspace.setAllowFrozenEntityDamage(restoredController.isAllowFrozenEntityDamage());
+        workspace.setAllowFrozenEntityCollision(restoredController.isAllowFrozenEntityCollision());
+        restoredController.setInitialSnapshot(snapshot);
         restoredController.getOperationLog().logPlayer("revert", "Reverted " + changed + " blocks");
     }
 
     private void handleSendChat(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
         Workspace workspace = getBoundWorkspace(level, controller);
-        if (workspace != null && !WorkspaceRules.canPlayerManage(player, workspace)) {
+        if (workspace != null && !WorkspaceAccessControl.canPlayerChat(player, workspace)) {
             return;
         }
         if (workspace == null && !controller.getWorkspaceName().isEmpty()) {
@@ -266,7 +342,7 @@ public class WorkspaceActionPacket {
 
     private void handleFreeze(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
         Workspace workspace = getBoundWorkspace(level, controller);
-        if (workspace != null && WorkspaceRules.canPlayerManage(player, workspace) && !workspace.isFrozen()) {
+        if (workspace != null && WorkspaceAccessControl.canPlayerUseTimeControls(player, workspace) && !workspace.isFrozen()) {
             TickController.freeze(level, workspace);
             controller.getOperationLog().logPlayer("freeze", "");
         }
@@ -274,7 +350,7 @@ public class WorkspaceActionPacket {
 
     private void handleUnfreeze(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
         Workspace workspace = getBoundWorkspace(level, controller);
-        if (workspace != null && WorkspaceRules.canPlayerManage(player, workspace) && workspace.isFrozen()) {
+        if (workspace != null && WorkspaceAccessControl.canPlayerUseTimeControls(player, workspace) && workspace.isFrozen()) {
             TickController.unfreeze(level, workspace);
             controller.getOperationLog().logPlayer("unfreeze", "");
         }
@@ -282,7 +358,7 @@ public class WorkspaceActionPacket {
 
     private void handleStep(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
         Workspace workspace = getBoundWorkspace(level, controller);
-        if (workspace != null && WorkspaceRules.canPlayerManage(player, workspace) && workspace.isFrozen()) {
+        if (workspace != null && WorkspaceAccessControl.canPlayerUseTimeControls(player, workspace) && workspace.isFrozen()) {
             int count = Math.max(1, Math.min(sizeX, RAIConfig.SERVER.maxStepsPerCall.get()));
             int stepped = TickController.step(level, workspace, count);
             controller.getOperationLog().logPlayer("step", stepped + " tick(s)");
@@ -291,7 +367,7 @@ public class WorkspaceActionPacket {
 
     private void handleRewind(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
         Workspace workspace = getBoundWorkspace(level, controller);
-        if (workspace == null || !WorkspaceRules.canPlayerManage(player, workspace) || !workspace.isFrozen()) {
+        if (workspace == null || !WorkspaceAccessControl.canPlayerUseTimeControls(player, workspace) || !workspace.isFrozen()) {
             return;
         }
         if (workspace.getTimeline() == null) {
@@ -307,7 +383,7 @@ public class WorkspaceActionPacket {
 
     private void handleFastForward(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
         Workspace workspace = getBoundWorkspace(level, controller);
-        if (workspace == null || !WorkspaceRules.canPlayerManage(player, workspace) || !workspace.isFrozen()) {
+        if (workspace == null || !WorkspaceAccessControl.canPlayerUseTimeControls(player, workspace) || !workspace.isFrozen()) {
             return;
         }
 
@@ -322,8 +398,192 @@ public class WorkspaceActionPacket {
             if (workspace == null || workspace.isFrozen() || !WorkspaceRules.canPlayerManage(player, workspace)) {
                 return;
             }
+            if (!WorkspaceAccessControl.canPlayerManageSettings(player, workspace)) {
+                return;
+            }
         }
         SelectionManager.beginSelection(player, controllerPos, controller.getWorkspaceName());
+    }
+
+    private void handleSetProtectionMode(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
+        ProtectionMode mode = ProtectionMode.tryParse(chatMessage);
+        if (mode == null) {
+            return;
+        }
+
+        Workspace workspace = getBoundWorkspace(level, controller);
+        if (workspace == null) {
+            if (!controller.getWorkspaceName().isEmpty()) {
+                return;
+            }
+            controller.setProtectionMode(mode);
+            controller.getOperationLog().logPlayer("config", "Pending protection mode set to " + mode.getSerializedName());
+            return;
+        }
+
+        if (!WorkspaceAccessControl.canPlayerManageSettings(player, workspace) || workspace.isFrozen()) {
+            return;
+        }
+
+        workspace.setProtectionMode(mode);
+        controller.setProtectionMode(mode);
+        WorkspaceManager.get(level).setDirty();
+        controller.getOperationLog().logPlayer("config", "Protection mode set to " + mode.getSerializedName());
+    }
+
+    private void handleSetEntityFilter(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
+        EntityFilterMode mode = EntityFilterMode.fromString(chatMessage);
+        Workspace workspace = getBoundWorkspace(level, controller);
+        if (workspace == null) {
+            if (!controller.getWorkspaceName().isEmpty()) {
+                return;
+            }
+            controller.setEntityFilterMode(mode);
+            controller.getOperationLog().logPlayer("config", "Pending entity filter set to " + mode.getSerializedName());
+            return;
+        }
+
+        if (!WorkspaceAccessControl.canPlayerManageSettings(player, workspace) || workspace.isFrozen()) {
+            return;
+        }
+
+        workspace.setEntityFilterMode(mode);
+        controller.setEntityFilterMode(mode);
+        WorkspaceManager.get(level).setDirty();
+        TickController.invalidateRecording(level, workspace);
+        controller.getOperationLog().logPlayer("config", "Entity filter set to " + mode.getSerializedName());
+    }
+
+    private void handleSetAuthorizedPlayers(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
+        List<String> players = WorkspaceAccessControl.parseAuthorizedPlayers(chatMessage);
+        Workspace workspace = getBoundWorkspace(level, controller);
+        if (workspace == null) {
+            if (!controller.getWorkspaceName().isEmpty()) {
+                return;
+            }
+            controller.replaceAuthorizedPlayers(players);
+            controller.getOperationLog().logPlayer("config", "Pending authorized players updated");
+            return;
+        }
+
+        if (!WorkspaceAccessControl.canPlayerManageSettings(player, workspace) || workspace.isFrozen()) {
+            return;
+        }
+        workspace.replaceAuthorizedPlayers(players);
+        controller.replaceAuthorizedPlayers(players);
+        WorkspaceManager.get(level).setDirty();
+        controller.getOperationLog().logPlayer("config", "Authorized players updated");
+    }
+
+    private void handleSetPlayerPermission(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
+        String[] split = chatMessage.split("\\|", 2);
+        if (split.length != 2) {
+            return;
+        }
+        WorkspacePermission permission = WorkspacePermission.tryParse(split[1]);
+        if (permission == null) {
+            return;
+        }
+        boolean enabled = sizeX > 0;
+        String playerName = WorkspaceAccessControl.normalizePlayerName(split[0]);
+        if (playerName.isBlank()) {
+            return;
+        }
+
+        Workspace workspace = getBoundWorkspace(level, controller);
+        if (workspace == null) {
+            if (!controller.getWorkspaceName().isEmpty()) {
+                return;
+            }
+            controller.setPlayerPermission(playerName, permission, enabled);
+            controller.getOperationLog().logPlayer("config", "Pending permission " + permission.getSerializedName() + " for " + playerName + " = " + enabled);
+            return;
+        }
+        if (!WorkspaceAccessControl.canPlayerManageSettings(player, workspace) || workspace.isFrozen()) {
+            return;
+        }
+        controller.setPlayerPermission(playerName, permission, enabled);
+        workspace.setPlayerPermission(playerName, permission, enabled);
+        WorkspaceManager.get(level).setDirty();
+        controller.getOperationLog().logPlayer("config", "Permission " + permission.getSerializedName() + " for " + playerName + " = " + enabled);
+    }
+
+    private void handleRemovePlayerPermissions(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
+        String playerName = WorkspaceAccessControl.normalizePlayerName(chatMessage);
+        if (playerName.isBlank()) {
+            return;
+        }
+        Workspace workspace = getBoundWorkspace(level, controller);
+        if (workspace == null) {
+            if (!controller.getWorkspaceName().isEmpty()) {
+                return;
+            }
+            controller.removePlayerPermissions(playerName);
+            controller.getOperationLog().logPlayer("config", "Pending permissions removed for " + playerName);
+            return;
+        }
+        if (!WorkspaceAccessControl.canPlayerManageSettings(player, workspace) || workspace.isFrozen()) {
+            return;
+        }
+        controller.removePlayerPermissions(playerName);
+        workspace.removePlayerPermissions(playerName);
+        WorkspaceManager.get(level).setDirty();
+        controller.getOperationLog().logPlayer("config", "Permissions removed for " + playerName);
+    }
+
+    private void handleSetAllowCommands(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
+        handleBooleanSetting(player, level, controller, sizeX > 0,
+                WorkspaceControllerBlockEntity::setAllowVanillaCommands,
+                Workspace::setAllowVanillaCommands,
+                "Vanilla commands");
+    }
+
+    private void handleSetAllowFrozenTeleport(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
+        handleBooleanSetting(player, level, controller, sizeX > 0,
+                WorkspaceControllerBlockEntity::setAllowFrozenEntityTeleport,
+                Workspace::setAllowFrozenEntityTeleport,
+                "Frozen entity teleport");
+    }
+
+    private void handleSetAllowFrozenDamage(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
+        handleBooleanSetting(player, level, controller, sizeX > 0,
+                WorkspaceControllerBlockEntity::setAllowFrozenEntityDamage,
+                Workspace::setAllowFrozenEntityDamage,
+                "Frozen entity damage");
+    }
+
+    private void handleSetAllowFrozenCollision(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
+        handleBooleanSetting(player, level, controller, sizeX > 0,
+                WorkspaceControllerBlockEntity::setAllowFrozenEntityCollision,
+                Workspace::setAllowFrozenEntityCollision,
+                "Frozen entity collision");
+    }
+
+    private void handleBooleanSetting(ServerPlayer player,
+                                      ServerLevel level,
+                                      WorkspaceControllerBlockEntity controller,
+                                      boolean enabled,
+                                      java.util.function.BiConsumer<WorkspaceControllerBlockEntity, Boolean> controllerSetter,
+                                      java.util.function.BiConsumer<Workspace, Boolean> workspaceSetter,
+                                      String label) {
+        Workspace workspace = getBoundWorkspace(level, controller);
+        if (workspace == null) {
+            if (!controller.getWorkspaceName().isEmpty()) {
+                return;
+            }
+            controllerSetter.accept(controller, enabled);
+            controller.getOperationLog().logPlayer("config", "Pending " + label + " set to " + enabled);
+            return;
+        }
+
+        if (!WorkspaceRules.canPlayerManage(player, workspace) || workspace.isFrozen()) {
+            return;
+        }
+
+        controllerSetter.accept(controller, enabled);
+        workspaceSetter.accept(workspace, enabled);
+        WorkspaceManager.get(level).setDirty();
+        controller.getOperationLog().logPlayer("config", label + " set to " + enabled);
     }
 
     private WorkspaceControllerBlockEntity getAuthorizedController(ServerPlayer player, ServerLevel level) {
@@ -352,5 +612,13 @@ public class WorkspaceActionPacket {
             return null;
         }
         return workspace;
+    }
+
+    private BoundingBox resolveInitialBounds(WorkspaceControllerBlockEntity controller, int requestedSizeX, int requestedSizeY, int requestedSizeZ) {
+        InitialSnapshot snapshot = controller.getInitialSnapshot();
+        if (snapshot != null) {
+            return WorkspaceRules.resizeBounds(snapshot.getBounds(), controllerPos.getY(), requestedSizeX, requestedSizeY, requestedSizeZ);
+        }
+        return WorkspaceRules.createBoundsFromController(controllerPos, requestedSizeX, requestedSizeY, requestedSizeZ);
     }
 }

@@ -10,6 +10,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.phys.AABB;
 
 import javax.annotation.Nullable;
 import java.util.*;
@@ -104,6 +105,49 @@ public class WorkspaceManager extends SavedData {
         return workspacesById.get(id);
     }
 
+    @Nullable
+    public synchronized Workspace getByControllerPos(BlockPos controllerPos) {
+        for (Workspace workspace : workspacesById.values()) {
+            if (workspace.isControllerPos(controllerPos)) {
+                return workspace;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    public synchronized Workspace getWorkspaceContainingAABB(AABB box) {
+        Set<UUID> visited = new HashSet<>();
+        int minChunkX = ((int) Math.floor(box.minX)) >> 4;
+        int maxChunkX = ((int) Math.floor(box.maxX - 1.0E-6D)) >> 4;
+        int minChunkZ = ((int) Math.floor(box.minZ)) >> 4;
+        int maxChunkZ = ((int) Math.floor(box.maxZ - 1.0E-6D)) >> 4;
+
+        for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+            for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                List<Workspace> candidates = workspacesByChunk.get(ChunkPos.asLong(chunkX, chunkZ));
+                if (candidates == null) {
+                    continue;
+                }
+                for (Workspace workspace : candidates) {
+                    if (!visited.add(workspace.getId())) {
+                        continue;
+                    }
+                    BoundingBox bounds = workspace.getBounds();
+                    if (box.minX >= bounds.minX()
+                            && box.minY >= bounds.minY()
+                            && box.minZ >= bounds.minZ()
+                            && box.maxX <= bounds.maxX() + 1.0
+                            && box.maxY <= bounds.maxY() + 1.0
+                            && box.maxZ <= bounds.maxZ() + 1.0) {
+                        return workspace;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     public synchronized Collection<Workspace> getAllWorkspaces() {
         return Collections.unmodifiableCollection(workspacesById.values());
     }
@@ -170,14 +214,24 @@ public class WorkspaceManager extends SavedData {
     }
 
     public synchronized void updateWorkspaceBounds(Workspace workspace, BoundingBox newBounds) {
-        updateWorkspaceGeometry(workspace, newBounds, null);
+        updateWorkspaceGeometry(workspace, newBounds, null, null);
     }
 
     public synchronized void updateWorkspaceGeometry(Workspace workspace, BoundingBox newBounds, @Nullable BlockPos newControllerPos) {
+        updateWorkspaceGeometry(workspace, newBounds, newControllerPos, null);
+    }
+
+    public synchronized void updateWorkspaceGeometry(Workspace workspace,
+                                                     BoundingBox newBounds,
+                                                     @Nullable BlockPos newControllerPos,
+                                                     @Nullable BlockPos newOriginPos) {
         unindexWorkspace(workspace);
         workspace.setBounds(newBounds);
         if (newControllerPos != null) {
             workspace.setControllerPos(newControllerPos);
+        }
+        if (newOriginPos != null) {
+            workspace.setOriginPos(newOriginPos);
         }
         indexWorkspace(workspace);
         setDirty();

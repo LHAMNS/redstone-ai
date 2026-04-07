@@ -2,7 +2,11 @@ package com.redstoneai.client;
 
 import com.redstoneai.network.RAINetwork;
 import com.redstoneai.network.WorkspaceActionPacket;
+import com.redstoneai.workspace.EntityFilterMode;
+import com.redstoneai.workspace.ProtectionMode;
 import com.redstoneai.workspace.WorkspaceControllerMenu;
+import com.redstoneai.workspace.WorkspacePermission;
+import com.redstoneai.workspace.WorkspaceRules;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -12,6 +16,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
+import javax.annotation.Nullable;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -52,6 +58,7 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
     private EditBox sizeXField;
     private EditBox sizeYField;
     private EditBox sizeZField;
+    private EditBox authorizedPlayersField;
     private EditBox chatInput;
     private Button createButton;
     private Button revertButton;
@@ -61,6 +68,15 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
     private Button rewindButton;
     private Button ffButton;
     private Button selectRangeButton;
+    private final List<Button> protectionModeButtons = new ArrayList<>();
+    private final List<Button> entityFilterButtons = new ArrayList<>();
+    private final List<Button> playerPermissionButtons = new ArrayList<>();
+    private Button applyAuthorizedPlayersButton;
+    private Button clearPlayerPermissionsButton;
+    private Button allowCommandsButton;
+    private Button allowFrozenTeleportButton;
+    private Button allowFrozenDamageButton;
+    private Button allowFrozenCollisionButton;
     private Button fullscreenButton;
     private WorkspacePreviewWidget previewWidget;
 
@@ -74,7 +90,7 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
     public WorkspaceScreen(WorkspaceControllerMenu menu, Inventory playerInv, Component title) {
         super(menu, playerInv, title);
         this.imageWidth = 440;
-        this.imageHeight = 280;
+        this.imageHeight = 414;
     }
 
     @Override
@@ -86,7 +102,7 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
             this.imageHeight = this.height;
         } else {
             this.imageWidth = 440;
-            this.imageHeight = 280;
+            this.imageHeight = 414;
         }
 
         super.init();
@@ -150,7 +166,66 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
         ).pos(x + tickBtnW * 2 + 104, tickBtnY).size(70, 16).build();
         addRenderableWidget(selectRangeButton);
 
-        if (menu.getWorkspaceBounds() != null && Minecraft.getInstance().getSingleplayerServer() != null) {
+        protectionModeButtons.clear();
+        int modeY = tickBtnY + 18;
+        int modeBtnX = x + 62;
+        int modeBtnW = 52;
+        int modeGap = 3;
+        addModeButton(ProtectionMode.LOCKED, modeBtnX, modeY, modeBtnW);
+        addModeButton(ProtectionMode.AI_ONLY, modeBtnX + (modeBtnW + modeGap), modeY, modeBtnW);
+        addModeButton(ProtectionMode.PLAYER_ONLY, modeBtnX + (modeBtnW + modeGap) * 2, modeY, modeBtnW);
+        addModeButton(ProtectionMode.COLLABORATIVE, modeBtnX + (modeBtnW + modeGap) * 3, modeY, 64);
+
+        entityFilterButtons.clear();
+        int filterY = modeY + 22;
+        int filterBtnX = x + 62;
+        addEntityFilterButton(EntityFilterMode.ALL_NON_PLAYER, filterBtnX, filterY, 70);
+        addEntityFilterButton(EntityFilterMode.MECHANICAL_ONLY, filterBtnX + 73, filterY, 70);
+        addEntityFilterButton(EntityFilterMode.NONE, filterBtnX + 146, filterY, 54);
+
+        int playersY = filterY + 22;
+        authorizedPlayersField = new EditBox(font, x + 62, playersY, 164, 16, Component.translatable("gui.redstone_ai.players.hint"));
+        authorizedPlayersField.setMaxLength(256);
+        authorizedPlayersField.setHint(Component.translatable("gui.redstone_ai.players.hint"));
+        addRenderableWidget(authorizedPlayersField);
+
+        applyAuthorizedPlayersButton = Button.builder(Component.translatable("gui.redstone_ai.btn.apply"),
+                btn -> onApplyAuthorizedPlayers())
+                .pos(x + 230, playersY - 1).size(54, 18).build();
+        addRenderableWidget(applyAuthorizedPlayersButton);
+
+        playerPermissionButtons.clear();
+        int permissionY = playersY + 22;
+        addPlayerPermissionButton(WorkspacePermission.BUILD, x + 62, permissionY, 50);
+        addPlayerPermissionButton(WorkspacePermission.TIME_CONTROL, x + 115, permissionY, 50);
+        addPlayerPermissionButton(WorkspacePermission.VIEW_HISTORY, x + 168, permissionY, 54);
+        addPlayerPermissionButton(WorkspacePermission.CHAT, x + 225, permissionY, 38);
+        addPlayerPermissionButton(WorkspacePermission.MANAGE_SETTINGS, x + 62, permissionY + 18, 82);
+
+        clearPlayerPermissionsButton = Button.builder(Component.translatable("gui.redstone_ai.perm.clear"),
+                btn -> onClearPlayerPermissions())
+                .pos(x + 148, permissionY + 18).size(70, 16).build();
+        addRenderableWidget(clearPlayerPermissionsButton);
+
+        int securityY = permissionY + 40;
+        allowCommandsButton = Button.builder(Component.empty(), btn -> onToggleAllowCommands())
+                .pos(x + 62, securityY).size(110, 16).build();
+        addRenderableWidget(allowCommandsButton);
+
+        allowFrozenTeleportButton = Button.builder(Component.empty(), btn -> onToggleAllowFrozenTeleport())
+                .pos(x + 176, securityY).size(108, 16).build();
+        addRenderableWidget(allowFrozenTeleportButton);
+
+        allowFrozenDamageButton = Button.builder(Component.empty(), btn -> onToggleAllowFrozenDamage())
+                .pos(x + 62, securityY + 18).size(110, 16).build();
+        addRenderableWidget(allowFrozenDamageButton);
+
+        allowFrozenCollisionButton = Button.builder(Component.empty(), btn -> onToggleAllowFrozenCollision())
+                .pos(x + 176, securityY + 18).size(108, 16).build();
+        addRenderableWidget(allowFrozenCollisionButton);
+
+        BoundingBox previewBounds = getPreviewBoundsForRender();
+        if (previewBounds != null) {
             previewWidget = createPreviewWidget();
             previewWidget.setView(savedRotY, savedRotX, savedZoom);
             addRenderableWidget(previewWidget);
@@ -196,8 +271,8 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
         g.fill(leftPos, topPos, leftPos + 2, topPos + imageHeight, BORDER);
         g.fill(leftPos + panelW - 2, topPos, leftPos + panelW, topPos + imageHeight, BORDER);
 
-        int logTop = topPos + 78;
-        int chatTop = topPos + 178;
+        int logTop = topPos + 226;
+        int chatTop = topPos + 324;
         g.fill(leftPos + 4, logTop, leftPos + panelW - 4, logTop + 1, SECTION_LINE);
         g.fill(leftPos + 4, chatTop, leftPos + panelW - 4, chatTop + 1, SECTION_LINE);
 
@@ -237,7 +312,13 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
         g.drawString(font, "x", x + 73, y + 4, TEXT, false);
         g.drawString(font, "x", x + 121, y + 4, TEXT, false);
 
-        int logTop = 80;
+        g.drawString(font, Component.translatable("gui.redstone_ai.mode"), x, 82, LABEL, false);
+        g.drawString(font, Component.translatable("gui.redstone_ai.entity_filter"), x, 104, LABEL, false);
+        g.drawString(font, Component.translatable("gui.redstone_ai.players"), x, 126, LABEL, false);
+        g.drawString(font, Component.translatable("gui.redstone_ai.permissions"), x, 148, LABEL, false);
+        g.drawString(font, Component.translatable("gui.redstone_ai.security"), x, 190, LABEL, false);
+
+        int logTop = 228;
         g.drawString(font, Component.translatable("gui.redstone_ai.section.log"), x, logTop + 4, LABEL, false);
 
         int logY = logTop + 16;
@@ -256,7 +337,7 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
             g.drawString(font, Component.literal("History unavailable"), x + 2, logY, 0xFF888888, false);
         }
 
-        int chatTop = 180;
+        int chatTop = 326;
         g.drawString(font, Component.translatable("gui.redstone_ai.section.chat"), x, chatTop + 4, LABEL, false);
 
         int chatY = chatTop + 16;
@@ -327,6 +408,60 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
         RAINetwork.CHANNEL.sendToServer(WorkspaceActionPacket.selectRange(menu.getControllerPos()));
     }
 
+    private void onSetProtectionMode(ProtectionMode next) {
+        RAINetwork.CHANNEL.sendToServer(
+                WorkspaceActionPacket.setProtectionMode(menu.getControllerPos(), next.getSerializedName()));
+    }
+
+    private void onSetEntityFilter(EntityFilterMode next) {
+        RAINetwork.CHANNEL.sendToServer(
+                WorkspaceActionPacket.setEntityFilter(menu.getControllerPos(), next.getSerializedName()));
+    }
+
+    private void onApplyAuthorizedPlayers() {
+        RAINetwork.CHANNEL.sendToServer(
+                WorkspaceActionPacket.setAuthorizedPlayers(menu.getControllerPos(), authorizedPlayersField.getValue().trim()));
+    }
+
+    private void onSetPlayerPermission(WorkspacePermission permission) {
+        String playerName = authorizedPlayersField.getValue().trim();
+        if (playerName.isEmpty()) {
+            return;
+        }
+        boolean enabled = !menu.hasPlayerPermission(playerName, permission);
+        RAINetwork.CHANNEL.sendToServer(
+                WorkspaceActionPacket.setPlayerPermission(menu.getControllerPos(), playerName, permission, enabled));
+    }
+
+    private void onClearPlayerPermissions() {
+        String playerName = authorizedPlayersField.getValue().trim();
+        if (playerName.isEmpty()) {
+            return;
+        }
+        RAINetwork.CHANNEL.sendToServer(
+                WorkspaceActionPacket.removePlayerPermissions(menu.getControllerPos(), playerName));
+    }
+
+    private void onToggleAllowCommands() {
+        RAINetwork.CHANNEL.sendToServer(
+                WorkspaceActionPacket.setAllowCommands(menu.getControllerPos(), !menu.isAllowVanillaCommands()));
+    }
+
+    private void onToggleAllowFrozenTeleport() {
+        RAINetwork.CHANNEL.sendToServer(
+                WorkspaceActionPacket.setAllowFrozenTeleport(menu.getControllerPos(), !menu.isAllowFrozenEntityTeleport()));
+    }
+
+    private void onToggleAllowFrozenDamage() {
+        RAINetwork.CHANNEL.sendToServer(
+                WorkspaceActionPacket.setAllowFrozenDamage(menu.getControllerPos(), !menu.isAllowFrozenEntityDamage()));
+    }
+
+    private void onToggleAllowFrozenCollision() {
+        RAINetwork.CHANNEL.sendToServer(
+                WorkspaceActionPacket.setAllowFrozenCollision(menu.getControllerPos(), !menu.isAllowFrozenEntityCollision()));
+    }
+
     private void onSendChat() {
         String msg = chatInput.getValue().trim();
         if (!msg.isEmpty()) {
@@ -340,6 +475,12 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
         updateSizeField(sizeXField, menu.getSizeX());
         updateSizeField(sizeYField, menu.getSizeY());
         updateSizeField(sizeZField, menu.getSizeZ());
+        if (authorizedPlayersField != null && !authorizedPlayersField.isFocused()) {
+            String players = menu.getAuthorizedPlayers();
+            if (!players.equals(authorizedPlayersField.getValue())) {
+                authorizedPlayersField.setValue(players);
+            }
+        }
 
         boolean hasWorkspace = !menu.getWorkspaceName().isEmpty();
         if (createButton != null) {
@@ -365,6 +506,54 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
         if (selectRangeButton != null) {
             selectRangeButton.active = true;
         }
+        boolean settingsEditable = !hasWorkspace || !frozen;
+        for (Button button : protectionModeButtons) {
+            button.active = settingsEditable;
+        }
+        ProtectionMode currentProtectionMode = ProtectionMode.fromString(menu.getProtectionMode());
+        for (Button button : protectionModeButtons) {
+            Object mode = button.getMessage().getString();
+            // no-op placeholder to keep buttons in sync via explicit helper below
+        }
+        syncModeButtons(currentProtectionMode, settingsEditable);
+
+        EntityFilterMode currentEntityFilterMode = EntityFilterMode.fromString(menu.getEntityFilterMode());
+        syncEntityFilterButtons(currentEntityFilterMode, settingsEditable);
+
+        for (Button button : entityFilterButtons) {
+            button.active = settingsEditable && button.active;
+        }
+        if (applyAuthorizedPlayersButton != null) {
+            applyAuthorizedPlayersButton.active = settingsEditable;
+        }
+        String selectedPlayer = authorizedPlayersField != null ? authorizedPlayersField.getValue().trim() : "";
+        boolean hasSelectedPlayer = !selectedPlayer.isEmpty();
+        for (Button button : playerPermissionButtons) {
+            button.active = settingsEditable && hasSelectedPlayer;
+        }
+        if (clearPlayerPermissionsButton != null) {
+            clearPlayerPermissionsButton.active = settingsEditable && hasSelectedPlayer;
+        }
+        if (allowCommandsButton != null) {
+            allowCommandsButton.setMessage(Component.translatable(
+                    menu.isAllowVanillaCommands() ? "gui.redstone_ai.commands.allow" : "gui.redstone_ai.commands.block"));
+            allowCommandsButton.active = settingsEditable;
+        }
+        if (allowFrozenTeleportButton != null) {
+            allowFrozenTeleportButton.setMessage(Component.translatable(
+                    menu.isAllowFrozenEntityTeleport() ? "gui.redstone_ai.freeze_tp.allow" : "gui.redstone_ai.freeze_tp.block"));
+            allowFrozenTeleportButton.active = settingsEditable;
+        }
+        if (allowFrozenDamageButton != null) {
+            allowFrozenDamageButton.setMessage(Component.translatable(
+                    menu.isAllowFrozenEntityDamage() ? "gui.redstone_ai.freeze_damage.allow" : "gui.redstone_ai.freeze_damage.block"));
+            allowFrozenDamageButton.active = settingsEditable;
+        }
+        if (allowFrozenCollisionButton != null) {
+            allowFrozenCollisionButton.setMessage(Component.translatable(
+                    menu.isAllowFrozenEntityCollision() ? "gui.redstone_ai.freeze_collision.allow" : "gui.redstone_ai.freeze_collision.block"));
+            allowFrozenCollisionButton.active = settingsEditable;
+        }
         if (sendButton != null) {
             sendButton.active = !chatInput.getValue().trim().isEmpty();
         }
@@ -383,11 +572,10 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
     }
 
     private void syncPreviewWidget() {
-        boolean singleplayerPreview = Minecraft.getInstance().getSingleplayerServer() != null;
-        BoundingBox bounds = menu.getWorkspaceBounds();
-        if (!singleplayerPreview || bounds == null) {
+        BoundingBox bounds = getPreviewBoundsForRender();
+        if (bounds == null) {
             if (previewWidget != null) {
-                previewWidget.setBounds(null);
+                previewWidget.setPreview(null, menu.getControllerPos());
             }
             return;
         }
@@ -399,11 +587,30 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
             return;
         }
 
-        previewWidget.setBounds(bounds);
+        previewWidget.setPreview(bounds, menu.getControllerPos());
+    }
+
+    @Nullable
+    private BoundingBox getPreviewBoundsForRender() {
+        int previewSizeX = sizeXField != null ? parseSize(sizeXField.getValue(), menu.getSizeX()) : menu.getSizeX();
+        int previewSizeY = sizeYField != null ? parseSize(sizeYField.getValue(), menu.getSizeY()) : menu.getSizeY();
+        int previewSizeZ = sizeZField != null ? parseSize(sizeZField.getValue(), menu.getSizeZ()) : menu.getSizeZ();
+
+        BoundingBox liveBounds = menu.getWorkspaceBounds();
+        if (liveBounds != null) {
+            if (!WorkspaceRules.matchesDimensions(liveBounds, previewSizeX, previewSizeY, previewSizeZ)) {
+                return WorkspaceRules.resizeBounds(liveBounds, menu.getControllerPos().getY(), previewSizeX, previewSizeY, previewSizeZ);
+            }
+            return liveBounds;
+        }
+        if (!menu.getWorkspaceName().isEmpty()) {
+            return null;
+        }
+        return WorkspaceRules.createBoundsFromController(menu.getControllerPos(), previewSizeX, previewSizeY, previewSizeZ);
     }
 
     private WorkspacePreviewWidget createPreviewWidget() {
-        BoundingBox bounds = menu.getWorkspaceBounds();
+        BoundingBox bounds = getPreviewBoundsForRender();
         if (bounds == null) {
             throw new IllegalStateException("Preview widget requested without workspace bounds");
         }
@@ -424,7 +631,7 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
             previewW = 134;
             previewH = imageHeight - 8;
         }
-        return new WorkspacePreviewWidget(previewX, previewY, previewW, previewH, bounds);
+        return new WorkspacePreviewWidget(previewX, previewY, previewW, previewH, bounds, menu.getControllerPos());
     }
 
     @Override
@@ -448,14 +655,60 @@ public class WorkspaceScreen extends AbstractContainerScreen<WorkspaceController
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
         int relY = (int) mouseY - topPos;
-        if (menu.canViewHistory() && relY >= 78 && relY < 178) {
+        if (menu.canViewHistory() && relY >= 226 && relY < 324) {
             logScrollOffset = Math.max(0, logScrollOffset + (delta > 0 ? 1 : -1));
             return true;
-        } else if (menu.canViewHistory() && relY >= 178 && relY < imageHeight - 26) {
+        } else if (menu.canViewHistory() && relY >= 324 && relY < imageHeight - 26) {
             chatScrollOffset = Math.max(0, chatScrollOffset + (delta > 0 ? 1 : -1));
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, delta);
+    }
+
+    private void addModeButton(ProtectionMode mode, int x, int y, int width) {
+        Button button = Button.builder(Component.translatable("gui.redstone_ai.mode." + mode.getSerializedName()),
+                        btn -> onSetProtectionMode(mode))
+                .pos(x, y)
+                .size(width, 16)
+                .build();
+        protectionModeButtons.add(button);
+        addRenderableWidget(button);
+    }
+
+    private void addEntityFilterButton(EntityFilterMode mode, int x, int y, int width) {
+        Button button = Button.builder(Component.translatable("gui.redstone_ai.entity_filter." + mode.getSerializedName()),
+                        btn -> onSetEntityFilter(mode))
+                .pos(x, y)
+                .size(width, 16)
+                .build();
+        entityFilterButtons.add(button);
+        addRenderableWidget(button);
+    }
+
+    private void addPlayerPermissionButton(WorkspacePermission permission, int x, int y, int width) {
+        Button button = Button.builder(Component.translatable("gui.redstone_ai.perm." + permission.getSerializedName()),
+                        btn -> onSetPlayerPermission(permission))
+                .pos(x, y)
+                .size(width, 16)
+                .build();
+        playerPermissionButtons.add(button);
+        addRenderableWidget(button);
+    }
+
+    private void syncModeButtons(ProtectionMode currentMode, boolean settingsEditable) {
+        for (int i = 0; i < protectionModeButtons.size(); i++) {
+            ProtectionMode mode = ProtectionMode.values()[i];
+            Button button = protectionModeButtons.get(i);
+            button.active = settingsEditable && mode != currentMode;
+        }
+    }
+
+    private void syncEntityFilterButtons(EntityFilterMode currentMode, boolean settingsEditable) {
+        for (int i = 0; i < entityFilterButtons.size(); i++) {
+            EntityFilterMode mode = EntityFilterMode.values()[i];
+            Button button = entityFilterButtons.get(i);
+            button.active = settingsEditable && mode != currentMode;
+        }
     }
 
     private int parseSize(String s, int fallback) {

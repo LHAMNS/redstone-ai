@@ -20,7 +20,7 @@ import java.util.function.Supplier;
  * Mod networking channel for GUI packets.
  */
 public class RAINetwork {
-    private static final String PROTOCOL_VERSION = "2";
+    private static final String PROTOCOL_VERSION = "5";
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(RedstoneAI.ID, "main"),
             () -> PROTOCOL_VERSION,
@@ -42,6 +42,10 @@ public class RAINetwork {
                 WorkspaceControllerStateSyncPacket::encode,
                 WorkspaceControllerStateSyncPacket::decode,
                 WorkspaceControllerStateSyncPacket::handle);
+        CHANNEL.registerMessage(id++, SelectionPreviewSyncPacket.class,
+                SelectionPreviewSyncPacket::encode,
+                SelectionPreviewSyncPacket::decode,
+                SelectionPreviewSyncPacket::handle);
     }
 
     public static void writeNullableBoundingBox(FriendlyByteBuf buf, @Nullable BoundingBox bounds) {
@@ -77,6 +81,14 @@ public class RAINetwork {
             boolean frozen,
             int virtualTick,
             int recordingLength,
+            String protectionMode,
+            String entityFilterMode,
+            String authorizedPlayers,
+            List<String> playerPermissionEntries,
+            boolean allowVanillaCommands,
+            boolean allowFrozenEntityTeleport,
+            boolean allowFrozenEntityDamage,
+            boolean allowFrozenEntityCollision,
             boolean canViewHistory,
             boolean hasWorkspaceBounds,
             int boundsMinX,
@@ -103,6 +115,17 @@ public class RAINetwork {
             buf.writeBoolean(frozen);
             buf.writeInt(virtualTick);
             buf.writeInt(recordingLength);
+            buf.writeUtf(protectionMode, 64);
+            buf.writeUtf(entityFilterMode, 64);
+            buf.writeUtf(authorizedPlayers, 512);
+            buf.writeInt(playerPermissionEntries.size());
+            for (String entry : playerPermissionEntries) {
+                buf.writeUtf(entry, 512);
+            }
+            buf.writeBoolean(allowVanillaCommands);
+            buf.writeBoolean(allowFrozenEntityTeleport);
+            buf.writeBoolean(allowFrozenEntityDamage);
+            buf.writeBoolean(allowFrozenEntityCollision);
             buf.writeBoolean(canViewHistory);
             buf.writeBoolean(hasWorkspaceBounds);
             if (hasWorkspaceBounds) {
@@ -136,6 +159,18 @@ public class RAINetwork {
             boolean frozen = buf.readBoolean();
             int virtualTick = buf.readInt();
             int recordingLength = buf.readInt();
+            String protectionMode = buf.readUtf(64);
+            String entityFilterMode = buf.readUtf(64);
+            String authorizedPlayers = buf.readUtf(512);
+            int permissionEntryCount = buf.readInt();
+            List<String> playerPermissionEntries = new ArrayList<>(permissionEntryCount);
+            for (int i = 0; i < permissionEntryCount; i++) {
+                playerPermissionEntries.add(buf.readUtf(512));
+            }
+            boolean allowVanillaCommands = buf.readBoolean();
+            boolean allowFrozenEntityTeleport = buf.readBoolean();
+            boolean allowFrozenEntityDamage = buf.readBoolean();
+            boolean allowFrozenEntityCollision = buf.readBoolean();
             boolean canViewHistory = buf.readBoolean();
             boolean hasWorkspaceBounds = buf.readBoolean();
             int boundsMinX = controllerPos.getX();
@@ -187,6 +222,14 @@ public class RAINetwork {
                     frozen,
                     virtualTick,
                     recordingLength,
+                    protectionMode,
+                    entityFilterMode,
+                    authorizedPlayers,
+                    playerPermissionEntries,
+                    allowVanillaCommands,
+                    allowFrozenEntityTeleport,
+                    allowFrozenEntityDamage,
+                    allowFrozenEntityCollision,
                     canViewHistory,
                     hasWorkspaceBounds,
                     boundsMinX,
