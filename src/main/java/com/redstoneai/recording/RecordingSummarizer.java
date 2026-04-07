@@ -153,9 +153,10 @@ public final class RecordingSummarizer {
             for (var entry : delta.blockChanges().entrySet()) {
                 BlockPos pos = entry.getKey();
                 TickSnapshot.BlockStateChange change = entry.getValue();
-                sb.append("  [").append(pos.getX()).append(",")
-                        .append(pos.getY()).append(",")
-                        .append(pos.getZ()).append("] ");
+                BlockPos rel = ws.toRelativePos(pos);
+                sb.append("  [").append(rel.getX()).append(",")
+                        .append(rel.getY()).append(",")
+                        .append(rel.getZ()).append("] ");
                 sb.append(summarizeState(change.oldState()));
                 sb.append(" -> ");
                 sb.append(summarizeState(change.newState()));
