@@ -242,7 +242,13 @@ public final class TickController {
             FrozenTickQueue queue = frozenQueues.computeIfAbsent(ws.getId(), ignored -> new FrozenTickQueue());
             migratePendingScheduledTicks(level, ws, queue);
             migratePendingBlockEvents(level, ws, queue);
-            resetRecording(level, ws);
+            // Skip the expensive full-workspace snapshot if the timeline is
+            // already fresh (no deltas recorded yet) — avoids double-capture
+            // when freeze() was just called before an input change.
+            RecordingTimeline timeline = ws.getTimeline();
+            if (timeline == null || timeline.getLength() > 0) {
+                resetRecording(level, ws);
+            }
         } else {
             ws.setTimeline(null);
             ws.setVirtualTick(0);

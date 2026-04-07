@@ -187,7 +187,7 @@ public class WorkspaceManager extends SavedData {
      */
     @Nullable
     public synchronized Workspace getWorkspaceAt(BlockPos pos) {
-        List<Workspace> candidates = workspacesByChunk.get(ChunkPos.asLong(pos));
+        List<Workspace> candidates = workspacesByChunk.get(ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4));
         if (candidates == null) {
             return null;
         }

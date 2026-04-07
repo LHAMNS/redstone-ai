@@ -1,0 +1,9 @@
+Optimize invalidateRecording to skip redundant snapshot when timeline is fresh
+
+TickController.invalidateRecording: skip resetRecording (expensive full
+workspace snapshot) when the timeline exists but has zero deltas,
+meaning freeze() just created a fresh recording. This avoids double
+snapshot capture when inputs are applied immediately after freezing,
+improving test suite performance proportional to workspace size.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>

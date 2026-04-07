@@ -13,6 +13,9 @@ import com.redstoneai.network.rpc.handlers.SimulationHandler;
 import com.redstoneai.network.rpc.handlers.TestHandler;
 import com.redstoneai.network.rpc.handlers.WorkspaceHandler;
 import com.redstoneai.recording.IOMarker;
+import com.redstoneai.recording.RecordingSummarizer;
+import com.redstoneai.recording.RecordingTimeline;
+import com.redstoneai.recording.TickSnapshot;
 import com.redstoneai.tick.FrozenTickQueue;
 import com.redstoneai.tick.TickController;
 import com.redstoneai.workspace.Workspace;
@@ -179,6 +182,38 @@ public class RAIGameTests {
     }
 
     @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void command_fast_forward_replays_recorded_future(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos abs = helper.absolutePos(new BlockPos(20, 0, 20));
+        BoundingBox bounds = new BoundingBox(abs.getX(), abs.getY(), abs.getZ(),
+                abs.getX() + 2, abs.getY() + 2, abs.getZ() + 2);
+        Workspace ws = new Workspace(UUID.randomUUID(), new UUID(0, 0), "gt_ff_cmd", abs, bounds);
+        WorkspaceManager.get(level).addWorkspace(ws);
+
+        try {
+            TickController.freeze(level, ws);
+            helper.assertTrue(TickController.step(level, ws, 2) == 2, "seeded two recorded ticks");
+            helper.assertTrue(TickController.rewind(level, ws, 1) == 1, "rewound one recorded tick");
+            helper.assertTrue(ws.getVirtualTick() == 1, "virtual tick rewound to 1");
+
+            int result = level.getServer().getCommands().performPrefixedCommand(
+                    level.getServer().createCommandSourceStack(),
+                    "rai ff " + ws.getName() + " 1"
+            );
+
+            helper.assertTrue(result == 1, "fast-forward command should advance exactly one tick");
+            helper.assertTrue(ws.getVirtualTick() == 2, "fast-forward command restored the rewound tick");
+        } finally {
+            if (ws.isFrozen()) {
+                TickController.unfreeze(level, ws);
+            }
+            TickController.removeQueue(ws.getId());
+            WorkspaceManager.get(level).removeWorkspace("gt_ff_cmd");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
     public static void workspace_overlap_detection(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         BlockPos abs = helper.absolutePos(BlockPos.ZERO);
@@ -200,6 +235,34 @@ public class RAIGameTests {
             helper.assertTrue(manager.checkOverlap(b3) == null, "no overlap");
         } finally {
             manager.removeWorkspace("gt_ovlp1");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void workspace_lookup_resolves_nonzero_chunk_positions(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(40, 7, 40));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), new UUID(0, 0), "gt_chunk_lookup", controllerPos, bounds);
+        WorkspaceManager manager = WorkspaceManager.get(level);
+        manager.addWorkspace(ws);
+
+        BlockPos inside = ws.toWorldPos(1, 0, 1);
+        BlockPos outside = inside.offset(16, 0, 0);
+        net.minecraft.world.level.block.state.BlockState before = level.getBlockState(inside);
+        int result = level.getServer().getCommands().performPrefixedCommand(
+                level.getServer().createCommandSourceStack(),
+                "setblock " + inside.getX() + " " + inside.getY() + " " + inside.getZ() + " minecraft:stone"
+        );
+
+        try {
+            helper.assertTrue(manager.getWorkspaceAt(inside) == ws, "lookup resolves workspace away from chunk 0,0");
+            helper.assertTrue(manager.getWorkspaceAt(outside) == null, "lookup outside bounds returns null");
+            helper.assertTrue(result == 0, "command protection still resolves workspace outside chunk 0,0");
+            helper.assertTrue(level.getBlockState(inside).equals(before), "protected block remains unchanged");
+        } finally {
+            manager.removeWorkspace("gt_chunk_lookup");
         }
         helper.succeed();
     }
@@ -1133,6 +1196,51 @@ public class RAIGameTests {
     }
 
     @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void command_revert_remains_reusable(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        WorkspaceHandler handler = new WorkspaceHandler();
+        String name = "gt_cmd_revert";
+        Workspace ws = null;
+
+        try {
+            JsonObject createParams = new JsonObject();
+            createParams.addProperty("name", name);
+            createParams.addProperty("sizeX", 5);
+            createParams.addProperty("sizeY", 4);
+            createParams.addProperty("sizeZ", 5);
+            handler.create(new JsonRpcRequest("cmd-revert-create", "workspace.create", createParams), level.getServer());
+
+            ws = WorkspaceManager.get(level).getByName(name);
+            helper.assertTrue(ws != null, "workspace created");
+
+            BlockPos changedPos = ws.toWorldPos(1, 0, 1);
+            level.setBlock(changedPos, Blocks.STONE.defaultBlockState(), 3);
+            int first = level.getServer().getCommands().performPrefixedCommand(
+                    level.getServer().createCommandSourceStack(),
+                    "rai revert " + name
+            );
+            helper.assertTrue(first >= 1, "first revert restored at least one block");
+            helper.assertTrue(level.getBlockState(changedPos).isAir(), "first revert restored baseline");
+
+            level.setBlock(changedPos, Blocks.GLASS.defaultBlockState(), 3);
+            int second = level.getServer().getCommands().performPrefixedCommand(
+                    level.getServer().createCommandSourceStack(),
+                    "rai revert " + name
+            );
+            helper.assertTrue(second >= 1, "second revert also restored at least one block");
+            helper.assertTrue(level.getBlockState(changedPos).isAir(), "second revert remained reusable");
+        } catch (JsonRpcException e) {
+            helper.fail("Command revert regression should create workspace successfully: " + e.getMessage());
+        } finally {
+            if (ws != null) {
+                level.setBlock(ws.getControllerPos(), Blocks.AIR.defaultBlockState(), 3);
+                WorkspaceManager.get(level).removeWorkspace(name);
+            }
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
     public static void rpc_single_test_is_isolated_and_restores_input_fixture(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         BlockPos controllerPos = helper.absolutePos(new BlockPos(2, 7, 7));
@@ -1268,6 +1376,63 @@ public class RAIGameTests {
         } finally {
             WorkspaceManager.get(level).removeWorkspace("gt_io_handler");
         }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void command_io_mark_uses_workspace_local_coordinates(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(24, 7, 24));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), new UUID(0, 0), "gt_cmd_io_mark", controllerPos, bounds);
+        WorkspaceManager.get(level).addWorkspace(ws);
+
+        try {
+            int result = level.getServer().getCommands().performPrefixedCommand(
+                    level.getServer().createCommandSourceStack(),
+                    "rai io mark " + ws.getName() + " input A 1 0 1"
+            );
+
+            helper.assertTrue(result == 1, "command marker creation succeeded");
+            helper.assertTrue(ws.getIOMarkers().size() == 1, "exactly one marker stored");
+            IOMarker marker = ws.getIOMarkers().get(0);
+            helper.assertTrue(marker.pos().equals(ws.toWorldPos(1, 0, 1)), "command coordinates are workspace-local");
+            helper.assertTrue("A".equals(marker.label()), "marker label preserved");
+        } finally {
+            WorkspaceManager.get(level).removeWorkspace("gt_cmd_io_mark");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void recording_summary_level3_includes_io_labels(GameTestHelper helper) {
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(16, 7, 16));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), new UUID(0, 0), "gt_summary_labels", controllerPos, bounds);
+        BlockPos markerPos = ws.toWorldPos(1, 0, 1);
+        ws.addIOMarker(new IOMarker(markerPos, IOMarker.IORole.INPUT, "A"));
+
+        RecordingTimeline timeline = new RecordingTimeline(8);
+        FrozenTickQueue.QueueState emptyQueue = new FrozenTickQueue.QueueState(List.of(), List.of(), List.of(), List.of());
+        TickSnapshot delta = new TickSnapshot(
+                0,
+                Map.of(markerPos, new TickSnapshot.BlockStateChange(
+                        Blocks.AIR.defaultBlockState(),
+                        Blocks.STONE.defaultBlockState(),
+                        null,
+                        null
+                )),
+                Map.of(markerPos, 15),
+                List.of(),
+                List.of(),
+                emptyQueue,
+                emptyQueue
+        );
+        timeline.addDelta(delta);
+        ws.setTimeline(timeline);
+
+        String summary = RecordingSummarizer.level3(ws);
+        helper.assertTrue(summary.contains("IO: A=15"), "level 3 summary reports IO labels alongside power levels");
         helper.succeed();
     }
 }
