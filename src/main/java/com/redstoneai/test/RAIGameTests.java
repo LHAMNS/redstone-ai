@@ -19,6 +19,7 @@ import com.redstoneai.workspace.Workspace;
 import com.redstoneai.workspace.WorkspaceManager;
 import com.redstoneai.workspace.WorkspaceRules;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
@@ -1002,7 +1003,11 @@ public class RAIGameTests {
             helper.assertTrue(ws != null, "workspace created");
 
             BlockPos changedPos = ws.toWorldPos(2, 1, 3);
-            level.setBlock(changedPos, Blocks.STONE.defaultBlockState(), 3);
+            var baselineState = level.getBlockState(changedPos);
+            var replacementState = baselineState.is(Blocks.STONE)
+                    ? Blocks.GLASS.defaultBlockState()
+                    : Blocks.STONE.defaultBlockState();
+            level.setBlock(changedPos, replacementState, 3);
 
             JsonObject diffParams = new JsonObject();
             diffParams.addProperty("name", name);
@@ -1021,8 +1026,10 @@ public class RAIGameTests {
             helper.assertTrue(change.get("x").getAsInt() == 2, "x preserved");
             helper.assertTrue(change.get("y").getAsInt() == 1, "y preserved");
             helper.assertTrue(change.get("z").getAsInt() == 3, "z preserved");
-            helper.assertTrue("minecraft:air".equals(change.get("baselineBlock").getAsString()), "baseline block tracked");
-            helper.assertTrue("minecraft:stone".equals(change.get("currentBlock").getAsString()), "current block tracked");
+            helper.assertTrue(!change.get("baselineBlock").getAsString().equals(change.get("currentBlock").getAsString()),
+                    "baseline and current differ");
+            helper.assertTrue(BuiltInRegistries.BLOCK.getKey(replacementState.getBlock()).toString()
+                    .equals(change.get("currentBlock").getAsString()), "current block tracked");
         } catch (JsonRpcException e) {
             helper.fail("Baseline diff should succeed: " + e.getMessage());
         } finally {

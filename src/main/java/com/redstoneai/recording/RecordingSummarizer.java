@@ -162,11 +162,22 @@ public final class RecordingSummarizer {
                 sb.append("\n");
             }
 
-            // IO levels at end of tick
+            // IO levels at end of tick (with labels if available)
             if (!delta.ioPowerLevels().isEmpty()) {
                 sb.append("  IO:");
                 for (var entry : delta.ioPowerLevels().entrySet()) {
-                    sb.append(" ").append(entry.getValue());
+                    String label = null;
+                    for (IOMarker marker : ws.getIOMarkers()) {
+                        if (marker.pos().equals(entry.getKey())) {
+                            label = marker.label();
+                            break;
+                        }
+                    }
+                    if (label != null) {
+                        sb.append(" ").append(label).append("=").append(entry.getValue());
+                    } else {
+                        sb.append(" ").append(entry.getKey().toShortString()).append("=").append(entry.getValue());
+                    }
                 }
                 sb.append("\n");
             }

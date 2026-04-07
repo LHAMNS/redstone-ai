@@ -520,6 +520,7 @@ public final class RAICommands {
             }
 
             MCRPlacer.PlaceResult result = MCRPlacer.place(level, ws, blocks);
+            TickController.invalidateRecording(level, ws);
             ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] Placed " + result.placed() + " block(s)" +
                     (result.skipped() > 0 ? ", " + result.skipped() + " skipped (out of bounds)" : ""))
                     .withStyle(ChatFormatting.GREEN), false);

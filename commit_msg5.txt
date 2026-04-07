@@ -1,0 +1,9 @@
+Fix missing invalidateRecording in buildMCR command, add IO labels to level3 summary
+
+- RAICommands.buildMCR: add TickController.invalidateRecording() after
+  MCRPlacer.place() to prevent stale recording timeline when building
+  via command while frozen
+- RecordingSummarizer.level3: cross-reference IO power levels with
+  workspace IO markers to print labels instead of anonymous values
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
