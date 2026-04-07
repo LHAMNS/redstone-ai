@@ -1,0 +1,15 @@
+Add 50 JUnit 5 offline unit tests for core logic classes
+
+Tests run without Minecraft runtime via standard `gradlew test`:
+- MCRParserTest (18): block codes, modifiers, directives, range
+  validation, error handling, reference card
+- JsonRpcRequestTest (9): JSON-RPC 2.0 parsing, params, version check
+- JsonRpcResponseTest (4): success/error response, null id
+- RecordingTimelineTest (7): delta add, rewind, fast-forward, truncate,
+  capacity eviction
+- TestSuiteTest (5): builder, summarize, empty suite
+- OperationLogTest (7): log/retrieve, lastN, trim, NBT round-trip
+
+Also: add JUnit 5 dependency to build.gradle, configure test task.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>

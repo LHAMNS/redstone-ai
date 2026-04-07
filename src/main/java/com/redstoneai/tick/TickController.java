@@ -129,9 +129,31 @@ public final class TickController {
         if (!ws.isFrozen()) {
             return;
         }
+        discardFrozenState(level, ws, ws.getBounds(), ws.getOriginPos());
+    }
+
+    public static void discardFrozenState(ServerLevel level, Workspace ws, BoundingBox unloadBounds, BlockPos unloadOrigin) {
+        if (!ws.isFrozen()) {
+            return;
+        }
         ws.setFrozen(false);
         frozenQueues.remove(ws.getId());
-        WorkspaceChunkLoader.unloadWorkspace(level, ws);
+        WorkspaceChunkLoader.unloadWorkspace(level, unloadBounds, unloadOrigin, ws.getName());
+        WorkspaceManager.get(level).setDirty();
+        WorkspaceBoundarySyncPacket.sync(level);
+    }
+
+    public static void restoreFrozenRuntimeState(ServerLevel level,
+                                                 Workspace ws,
+                                                 @Nullable RecordingTimeline timeline,
+                                                 int virtualTick,
+                                                 FrozenTickQueue.QueueState queueState) {
+        ws.setFrozen(true);
+        ws.setTimeline(timeline);
+        ws.setVirtualTick(virtualTick);
+        FrozenTickQueue queue = frozenQueues.computeIfAbsent(ws.getId(), ignored -> new FrozenTickQueue());
+        queue.restore(queueState);
+        WorkspaceChunkLoader.forceLoadWorkspace(level, ws);
         WorkspaceManager.get(level).setDirty();
         WorkspaceBoundarySyncPacket.sync(level);
     }

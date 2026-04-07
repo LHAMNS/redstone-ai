@@ -330,11 +330,19 @@ public class WorkspaceHandler {
         }
 
         boolean wasFrozen = workspace.isFrozen();
+        BoundingBox previousBounds = workspace.getBounds();
+        BlockPos previousOrigin = workspace.getOriginPos();
         int changed = snapshot.restore(level);
         BlockPos restoredControllerPos = snapshot.getControllerPos() != null ? snapshot.getControllerPos() : workspace.getControllerPos();
         WorkspaceControllerBlockEntity restoredController = level.getBlockEntity(restoredControllerPos) instanceof WorkspaceControllerBlockEntity be
                 ? be
                 : controller;
+
+        if (wasFrozen) {
+            TickController.discardFrozenState(level, workspace, previousBounds, previousOrigin);
+        } else {
+            TickController.removeQueue(workspace.getId());
+        }
 
         WorkspaceManager manager = WorkspaceManager.get(level);
         manager.updateWorkspaceGeometry(
@@ -345,10 +353,6 @@ public class WorkspaceHandler {
         );
         workspace.setTimeline(null);
         workspace.setVirtualTick(0);
-        TickController.removeQueue(workspace.getId());
-        if (wasFrozen) {
-            TickController.discardFrozenState(level, workspace);
-        }
         restoredController.setInitialSnapshot(snapshot);
         applyControllerSettings(workspace, restoredController);
         restoredController.getOperationLog().logSystem("revert", "RPC reverted " + changed + " blocks to initial state");

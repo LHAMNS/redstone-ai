@@ -557,10 +557,13 @@ public final class RAICommands {
             return 0;
         }
 
+        BoundingBox previousBounds = ws.getBounds();
+        BlockPos previousOrigin = ws.getOriginPos();
+
         // Discard frozen state BEFORE updating geometry so chunk tickets
-        // are released using the old bounds, preventing ticket leaks
+        // are released using the old bounds, preventing ticket leaks.
         if (ws.isFrozen()) {
-            TickController.discardFrozenState(level, ws);
+            TickController.discardFrozenState(level, ws, previousBounds, previousOrigin);
         }
         ws.setTimeline(null);
         ws.setVirtualTick(0);

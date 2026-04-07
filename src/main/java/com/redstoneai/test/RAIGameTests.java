@@ -19,6 +19,7 @@ import com.redstoneai.recording.TickSnapshot;
 import com.redstoneai.tick.FrozenTickQueue;
 import com.redstoneai.tick.TickController;
 import com.redstoneai.workspace.Workspace;
+import com.redstoneai.workspace.WorkspaceAccessControl;
 import com.redstoneai.workspace.WorkspaceManager;
 import com.redstoneai.workspace.WorkspaceRules;
 import net.minecraft.core.BlockPos;
@@ -302,6 +303,28 @@ public class RAIGameTests {
     }
 
     @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void workspace_load_without_origin_uses_bounds_min_corner(GameTestHelper helper) {
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(3, 7, 3));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace original = new Workspace(
+                UUID.randomUUID(),
+                new UUID(0, 0),
+                "gt_origin_fallback",
+                controllerPos,
+                WorkspaceRules.originFromBounds(bounds),
+                bounds
+        );
+
+        CompoundTag tag = original.save();
+        tag.remove("originPos");
+
+        Workspace restored = Workspace.load(tag);
+        helper.assertTrue(restored.getOriginPos().equals(WorkspaceRules.originFromBounds(bounds)),
+                "legacy load falls back to bounds min corner");
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
     public static void workspace_save_load_preserves_security_settings(GameTestHelper helper) {
         BlockPos controllerPos = helper.absolutePos(new BlockPos(2, 7, 2));
         BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
@@ -357,6 +380,30 @@ public class RAIGameTests {
             entity.discard();
             TickController.removeQueue(ws.getId());
             WorkspaceManager.get(level).removeWorkspace("gt_entity_lock");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void live_workspace_does_not_block_external_entity_interaction(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(5, 7, 4));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), new UUID(0, 0), "gt_entity_collision_live", controllerPos, bounds);
+        WorkspaceManager.get(level).addWorkspace(ws);
+
+        ItemEntity inside = new ItemEntity(level, bounds.minX() + 1.5, bounds.minY() + 1.0, bounds.minZ() + 1.5, new ItemStack(Items.STONE));
+        ItemEntity outside = new ItemEntity(level, bounds.maxX() + 2.5, bounds.minY() + 1.0, bounds.minZ() + 1.5, new ItemStack(Items.DIRT));
+        level.addFreshEntity(inside);
+        level.addFreshEntity(outside);
+
+        try {
+            helper.assertTrue(!WorkspaceAccessControl.shouldBlockExternalEntityInteraction(inside, outside),
+                    "live workspace should not block external entity interaction");
+        } finally {
+            inside.discard();
+            outside.discard();
+            WorkspaceManager.get(level).removeWorkspace("gt_entity_collision_live");
         }
         helper.succeed();
     }
@@ -746,6 +793,7 @@ public class RAIGameTests {
             FrozenTickQueue queue = Objects.requireNonNull(TickController.getQueue(ws), "queue");
             queue.addBlockTick(abs.offset(1, 0, 0), Blocks.STONE, 2, TickPriority.NORMAL);
             ws.setVirtualTick(7);
+            RecordingTimeline originalTimeline = ws.getTimeline();
 
             FrozenTickQueue.QueueState beforeQueue = queue.snapshot();
             List<TestCase> cases = List.of(
@@ -758,6 +806,7 @@ public class RAIGameTests {
             helper.assertTrue(results.stream().allMatch(TestResult::passed), "suite passed");
             helper.assertTrue(ws.isFrozen(), "workspace restored frozen");
             helper.assertTrue(ws.getVirtualTick() == 7, "virtual tick restored");
+            helper.assertTrue(ws.getTimeline() == originalTimeline, "original timeline restored");
             helper.assertTrue(beforeQueue.equals(Objects.requireNonNull(TickController.getQueue(ws)).snapshot()),
                     "queue restored");
         } finally {

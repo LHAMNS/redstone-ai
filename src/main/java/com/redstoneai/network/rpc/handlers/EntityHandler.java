@@ -61,6 +61,7 @@ public class EntityHandler {
 
         ServerLevel level = server.overworld();
         Entity original = requireWorkspaceEntity(level, workspace, req.getStringParam("uuid"));
+        CompoundTag originalTag = baseEntityTag(original).copy();
 
         String entityTypeId = BuiltInRegistries.ENTITY_TYPE.getKey(original.getType()).toString();
         String mode = req.getStringParam("mode", "merge");
@@ -87,7 +88,11 @@ public class EntityHandler {
         Entity replacement = createEntity(level, updatedTag, entityTypeId);
         ensureEditableEntity(replacement, workspace);
         WorkspaceBypassContext.runWithEntityRemovalBypass(original::discard);
-        level.addFreshEntity(replacement);
+        if (!level.addFreshEntity(replacement)) {
+            restoreOriginalEntity(level, originalTag, entityTypeId);
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                    "Failed to apply entity update for " + original.getUUID());
+        }
         TickController.invalidateRecording(level, workspace);
         return toEntityResult(workspace, replacement, "updated");
     }
@@ -259,12 +264,35 @@ public class EntityHandler {
         if (params == null || (!params.has("yaw") && !params.has("pitch"))) {
             return;
         }
-        float yaw = (float) req.getDoubleParam("yaw", 0.0D);
-        float pitch = (float) req.getDoubleParam("pitch", 0.0D);
+        float yaw = params.has("yaw")
+                ? (float) req.getDoubleParam("yaw", 0.0D)
+                : getRotationComponent(tag, 0, 0.0F);
+        float pitch = params.has("pitch")
+                ? (float) req.getDoubleParam("pitch", 0.0D)
+                : getRotationComponent(tag, 1, 0.0F);
         ListTag rotation = new ListTag();
         rotation.add(FloatTag.valueOf(yaw));
         rotation.add(FloatTag.valueOf(pitch));
         tag.put("Rotation", rotation);
+    }
+
+    private float getRotationComponent(CompoundTag tag, int index, float fallback) {
+        if (!tag.contains("Rotation", net.minecraft.nbt.Tag.TAG_LIST)) {
+            return fallback;
+        }
+        ListTag rotation = tag.getList("Rotation", net.minecraft.nbt.Tag.TAG_FLOAT);
+        if (rotation.size() <= index) {
+            return fallback;
+        }
+        return rotation.getFloat(index);
+    }
+
+    private void restoreOriginalEntity(ServerLevel level, CompoundTag originalTag, String entityTypeId) throws JsonRpcException {
+        Entity restoredOriginal = createEntity(level, originalTag, entityTypeId);
+        if (!level.addFreshEntity(restoredOriginal)) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                    "Entity update failed and original entity could not be restored");
+        }
     }
 
     private JsonObject toEntityResult(Workspace workspace, Entity entity, String verb) {
