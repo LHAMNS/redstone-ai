@@ -526,6 +526,21 @@ public class WorkspaceHandler {
         return result;
     }
 
+    /**
+     * Add standard temporal state fields to any RPC response.
+     * All handlers should call this for workspace-related responses.
+     */
+    static void addStateFields(com.google.gson.JsonObject response, Workspace ws) {
+        response.addProperty("temporalState", ws.getTemporalState().getSerializedName());
+        response.addProperty("stateVersion", ws.getStateVersion());
+        response.addProperty("virtualTick", ws.getVirtualTick());
+        response.addProperty("lastMutationSource", ws.getLastMutationSource().getSerializedName());
+        if (ws.getTimeline() != null) {
+            response.addProperty("cursorTick", ws.getTimeline().getCurrentIndex() + 1);
+            response.addProperty("headTick", ws.getTimeline().getLength());
+        }
+    }
+
     private Workspace getWorkspace(JsonRpcRequest req, MinecraftServer server) throws JsonRpcException {
         String name = req.getStringParam("name");
         ServerLevel level = server.overworld();

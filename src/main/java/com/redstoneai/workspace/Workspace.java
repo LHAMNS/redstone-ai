@@ -45,6 +45,7 @@ public class Workspace {
     @Nullable
     private FrozenTickQueue.QueueState persistedFrozenQueueState;
     private int virtualTick;
+    private long stateVersion;
 
     public Workspace(UUID id, UUID ownerUUID, String name, BlockPos controllerPos, BoundingBox bounds) {
         this(id, ownerUUID, name, controllerPos, WorkspaceRules.originFromBounds(bounds), bounds);
@@ -72,6 +73,7 @@ public class Workspace {
         this.timeline = null;
         this.persistedFrozenQueueState = null;
         this.virtualTick = 0;
+        this.stateVersion = 0;
     }
 
     // --- Getters ---
@@ -95,6 +97,8 @@ public class Workspace {
     public WorkspaceMutationSource getLastMutationSource() { return lastMutationSource; }
     public List<IOMarker> getIOMarkers() { return Collections.unmodifiableList(ioMarkers); }
     public int getVirtualTick() { return virtualTick; }
+    public long getStateVersion() { return stateVersion; }
+    public void incrementStateVersion() { this.stateVersion++; }
 
     @Nullable
     public RecordingTimeline getTimeline() { return timeline; }
@@ -128,14 +132,14 @@ public class Workspace {
         }
     }
     public void setFrozen(boolean frozen) { this.frozen = frozen; }
-    public void setTemporalState(WorkspaceTemporalState temporalState) { this.temporalState = temporalState; }
+    public void setTemporalState(WorkspaceTemporalState temporalState) { this.temporalState = temporalState; this.stateVersion++; }
     public void setLastMutationSource(WorkspaceMutationSource lastMutationSource) { this.lastMutationSource = lastMutationSource; }
     public void setTimeline(@Nullable RecordingTimeline timeline) { this.timeline = timeline; }
     public void setPersistedFrozenQueueState(@Nullable FrozenTickQueue.QueueState queueState) { this.persistedFrozenQueueState = queueState; }
     public void setControllerPos(BlockPos controllerPos) { this.controllerPos = controllerPos; }
     public void setOriginPos(BlockPos originPos) { this.originPos = originPos; }
-    public void incrementVirtualTick() { this.virtualTick++; }
-    public void setVirtualTick(int tick) { this.virtualTick = tick; }
+    public void incrementVirtualTick() { this.virtualTick++; this.stateVersion++; }
+    public void setVirtualTick(int tick) { this.virtualTick = tick; this.stateVersion++; }
 
     // --- Query ---
 
@@ -314,6 +318,7 @@ public class Workspace {
         tag.putString("temporalState", temporalState.getSerializedName());
         tag.putString("lastMutationSource", lastMutationSource.getSerializedName());
         tag.putInt("virtualTick", virtualTick);
+        tag.putLong("stateVersion", stateVersion);
         if (timeline != null) {
             tag.put("timeline", timeline.save());
         }
@@ -382,6 +387,7 @@ public class Workspace {
             ws.lastMutationSource = WorkspaceMutationSource.NONE;
         }
         ws.virtualTick = tag.getInt("virtualTick");
+        ws.stateVersion = tag.contains("stateVersion") ? tag.getLong("stateVersion") : 0;
         if (tag.contains("timeline", Tag.TAG_COMPOUND)) {
             ws.timeline = RecordingTimeline.load(tag.getCompound("timeline"));
         }

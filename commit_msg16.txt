@@ -1,0 +1,13 @@
+Causal universe Phase A: stateVersion, canBuild guards, addStateFields helper
+
+- Workspace.java: add stateVersion counter (long, auto-increments on
+  setTemporalState/incrementVirtualTick/setVirtualTick), NBT persisted
+- WorkspaceHandler: addStateFields() static helper — adds temporalState,
+  stateVersion, virtualTick, lastMutationSource, cursorTick, headTick
+  to any RPC response
+- BuildHandler: canBuild() guard on buildMcr/buildBlock — rejects
+  FROZEN_CORRUPTED and FROZEN_REWOUND states
+- WorkspaceTemporalState: add isFrozen, canRewind, canFastForward,
+  canBuild, canUnfreeze, fromLegacyFrozen methods
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>

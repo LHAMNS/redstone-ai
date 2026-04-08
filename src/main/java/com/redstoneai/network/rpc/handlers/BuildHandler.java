@@ -28,6 +28,10 @@ public class BuildHandler {
     public JsonElement buildMcr(JsonRpcRequest req, MinecraftServer server) throws JsonRpcException {
         Workspace workspace = getWorkspace(req, server);
         enforceAiMutationAllowed(workspace);
+        if (!workspace.getTemporalState().canBuild()) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                    "Cannot build in " + workspace.getTemporalState().getSerializedName() + " state — discard future or revert first");
+        }
         String mcr = req.getStringParam("mcr");
 
         ServerLevel level = server.overworld();
@@ -48,6 +52,10 @@ public class BuildHandler {
     public JsonElement buildBlock(JsonRpcRequest req, MinecraftServer server) throws JsonRpcException {
         Workspace workspace = getWorkspace(req, server);
         enforceAiMutationAllowed(workspace);
+        if (!workspace.getTemporalState().canBuild()) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                    "Cannot build in " + workspace.getTemporalState().getSerializedName() + " state — discard future or revert first");
+        }
 
         String blockId = req.getStringParam("block");
         int x = req.getIntParam("x");
