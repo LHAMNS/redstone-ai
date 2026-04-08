@@ -1,11 +1,14 @@
 from redstone_mcp.analysis import (
     component_graph_data,
+    filter_signal_graph,
     format_impact,
     format_mechanisms,
     format_neighborhood,
     format_orthographic,
     format_signal_graph,
     format_trace_path,
+    resolve_endpoint,
+    signal_graph_data,
     watch_summary,
 )
 
@@ -61,10 +64,33 @@ def test_signal_graph_formatter_mentions_directed_edges():
     assert "->" in text
 
 
+def test_signal_graph_active_only_filters_inactive_edges():
+    active_scan = sample_scan()
+    active_scan["blocks"][0]["properties"]["powered"] = "true"
+    graph = signal_graph_data(active_scan)
+    filtered = filter_signal_graph(graph, root_id=None, max_hops=3, limit=40, active_only=True)
+    unfiltered = filter_signal_graph(graph, root_id=None, max_hops=3, limit=40, active_only=False)
+    assert len(filtered["edges"]) < len(unfiltered["edges"])
+    assert any(node["active"] for node in filtered["nodes"])
+
+
 def test_trace_path_resolves_labels():
     text = format_trace_path(sample_scan(), "IN", "OUT")
     assert "Resolved source: 0,0,0" in text
     assert "Resolved target: 3,0,0" in text
+
+
+def test_component_graph_nodes_match_scan_coordinates():
+    graph = component_graph_data(sample_scan())
+    node_ids = {node["id"] for node in graph["nodes"]}
+    assert "0,0,0" in node_ids
+    assert "2,0,0" in node_ids
+    assert "4,1,0" in node_ids
+
+
+def test_resolve_endpoint_reads_io_labels():
+    assert resolve_endpoint(sample_scan(), "IN") == "0,0,0"
+    assert resolve_endpoint(sample_scan(), "OUT") == "3,0,0"
 
 
 def test_watch_summary_lists_monitor_markers():

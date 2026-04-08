@@ -42,13 +42,15 @@ _BLOCK_ID_RE = re.compile(r"^[a-z0-9_.-]+:[a-z0-9_/.-]+$")
 _VALID_MODES = {"locked", "ai_only", "player_only", "collaborative"}
 _VALID_IO_ROLES = {"input", "output", "monitor"}
 _VALID_ENTITY_FILTERS = {"all_non_player", "mechanical_only", "none"}
-_VALID_WORKSPACE_PERMISSIONS = {"build", "time", "history", "chat", "settings"}
+_VALID_WORKSPACE_PERMISSIONS = {"build", "time", "history", "chat", "settings", "revert"}
 _VALID_NBT_MODES = {"merge", "replace"}
-_MAX_WORKSPACE_SIZE = 64  # Must match RAIConfig.SERVER.maxWorkspaceSize upper limit
+_MAX_WORKSPACE_SIZE = 64
+_MAX_LOCAL_COORD = _MAX_WORKSPACE_SIZE - 1
 _MAX_TICK_COUNT = 10_000
 _MAX_MCR_LENGTH = 8_192
 _MAX_TEST_CASES = 128
 _MAX_HISTORY_LIMIT = 200
+_SERVER_INFO_CACHE: dict[str, Any] | None = None
 _MODE_ALIASES = {
     "locked": "locked",
     "lock": "locked",
@@ -75,6 +77,7 @@ _PERMISSION_ALIASES = {
     "chat": "chat",
     "settings": "settings",
     "manage_settings": "settings",
+    "revert": "revert",
 }
 
 
@@ -90,8 +93,8 @@ def _require_workspace_size(size_x: int, size_y: int, size_z: int) -> None:
 
 
 def _require_nonnegative_relative_coords(x: int, y: int, z: int) -> None:
-    if min(x, y, z) < 0 or max(x, y, z) > _MAX_WORKSPACE_SIZE:
-        raise ValueError(f"relative coordinates must be between 0 and {_MAX_WORKSPACE_SIZE}")
+    if min(x, y, z) < 0 or max(x, y, z) > _MAX_LOCAL_COORD:
+        raise ValueError(f"relative coordinates must be between 0 and {_MAX_LOCAL_COORD}")
 
 
 def _require_tick_count(count: int) -> None:
@@ -145,7 +148,9 @@ def _require_test_cases(cases_list: Any) -> None:
             raise ValueError("case inputs/expected must be objects")
         _require_signal_map(inputs, "inputs")
         _require_signal_map(expected, "expected")
-        _require_tick_count(int(case.get("ticks", 10)))
+        ticks = int(case.get("ticks", 10))
+        if ticks < 1:
+            raise ValueError("case ticks must be >= 1")
 
 
 def _require_history_limit(limit: int) -> None:
@@ -291,6 +296,44 @@ def _tool_error(exc: Exception) -> str:
 async def _call(method: str, params: dict[str, Any] | None = None) -> Any:
     """Helper: call RPC through the synchronized protocol client."""
     return await _protocol.call(method, params)
+
+
+async def _get_server_info(force_refresh: bool = False) -> dict[str, Any]:
+    global _SERVER_INFO_CACHE
+    if _SERVER_INFO_CACHE is not None and not force_refresh:
+        return dict(_SERVER_INFO_CACHE)
+    try:
+        result = await _call("server.info")
+        if not isinstance(result, dict):
+            raise ValueError("server.info returned a malformed response")
+        _SERVER_INFO_CACHE = dict(result)
+        return dict(_SERVER_INFO_CACHE)
+    except Exception:
+        if _SERVER_INFO_CACHE is not None and not force_refresh:
+            return dict(_SERVER_INFO_CACHE)
+        raise
+
+
+async def _require_workspace_size_for_server(size_x: int, size_y: int, size_z: int) -> None:
+    _require_workspace_size(size_x, size_y, size_z)
+    try:
+        info = await _get_server_info(force_refresh=True)
+    except Exception as exc:
+        raise ValueError(f"could not fetch live server limits: {exc}") from exc
+    max_size = int(info.get("maxWorkspaceSize", _MAX_WORKSPACE_SIZE))
+    if any(value < 4 or value > max_size for value in (size_x, size_y, size_z)):
+        raise ValueError(f"workspace dimensions must be between 4 and {max_size}")
+
+
+async def _require_tick_count_for_server(count: int) -> None:
+    _require_tick_count(count)
+    try:
+        info = await _get_server_info(force_refresh=True)
+    except Exception as exc:
+        raise ValueError(f"could not fetch live server limits: {exc}") from exc
+    max_steps = int(info.get("maxStepsPerCall", _MAX_TICK_COUNT))
+    if count < 1 or count > max_steps:
+        raise ValueError(f"count must be between 1 and {max_steps}")
 
 
 def _sanitize_workspace_result(result: Any) -> Any:
@@ -491,7 +534,7 @@ async def workspace(
         if action in {"create", "delete", "clear", "info", "set_mode", "configure", "history", "revert"}:
             _require_workspace_name(name)
         if action == "create":
-            _require_workspace_size(sizeX, sizeY, sizeZ)
+            await _require_workspace_size_for_server(sizeX, sizeY, sizeZ)
         if action == "set_mode":
             mode = _normalize_mode(mode)
             _require_mode(mode)
@@ -561,6 +604,18 @@ async def build(
         if mcr:
             if len(mcr) > _MAX_MCR_LENGTH:
                 raise ValueError(f"mcr must be at most {_MAX_MCR_LENGTH} characters")
+            info = await _call("workspace.info", {"name": workspace})
+            size = info.get("size", [0, 0, 0])
+            if len(size) != 3:
+                raise ValueError("workspace size response is malformed")
+            valid, err = validate(
+                mcr,
+                size_x=int(size[0]),
+                size_y=int(size[1]),
+                size_z=int(size[2]),
+            )
+            if not valid:
+                raise ValueError(err)
         elif block:
             _require_block_id(block)
             await _require_workspace_relative_coords(workspace, x, y, z)
@@ -568,9 +623,6 @@ async def build(
         return _tool_error(exc)
 
     if mcr:
-        valid, err = validate(mcr)
-        if not valid:
-            return f"MCR validation error: {err}"
         result = await _call("build.mcr", {"workspace": workspace, "mcr": mcr})
     elif block:
         try:
@@ -600,11 +652,7 @@ async def build(
         )
     else:
         return "Provide either 'mcr' string or 'block' + coordinates"
-    output = json.dumps(result, indent=2)
-    skipped = result.get("skipped", 0) if isinstance(result, dict) else 0
-    if skipped > 0:
-        output += f"\nWARNING: {skipped} block(s) were out of workspace bounds and skipped"
-    return output
+    return json.dumps(result, indent=2)
 
 
 # ── Tool 3: snapshot ───────────────────────────────────────────────
@@ -753,14 +801,13 @@ async def time(
     - rewind: Go back N ticks (count parameter)
     - fast_forward: Go forward N ticks or replay stored ticks (count parameter)
     - settle: Advance until the circuit is quiet for quiet_ticks consecutive ticks, up to count ticks
-    - discard_future: When rewound, discard future deltas so step becomes available
     """
     try:
         _require_workspace_name(workspace)
         if action in {"step", "rewind", "fast_forward", "settle"}:
-            _require_tick_count(count)
+            await _require_tick_count_for_server(count)
         if action == "settle":
-            _require_tick_count(quiet_ticks)
+            await _require_tick_count_for_server(quiet_ticks)
     except ValueError as exc:
         return _tool_error(exc)
 
@@ -783,10 +830,8 @@ async def time(
             params["count"] = count
             params["quietTicks"] = quiet_ticks
             result = await _call("sim.settle", params)
-        case "discard_future":
-            result = await _call("sim.discard_future", params)
         case _:
-            return f"Unknown action: {action}. Use: freeze, unfreeze, step, rewind, fast_forward, settle, discard_future"
+            return f"Unknown action: {action}. Use: freeze, unfreeze, step, rewind, fast_forward, settle"
     return json.dumps(result, indent=2)
 
 
@@ -803,7 +848,7 @@ async def simulate(
     """
     try:
         _require_workspace_name(workspace)
-        _require_tick_count(ticks)
+        await _require_tick_count_for_server(ticks)
     except ValueError as exc:
         return _tool_error(exc)
     if not (await _call("workspace.info", {"name": workspace})).get("frozen"):
@@ -890,8 +935,10 @@ async def test_suite(
         return "Invalid JSON in cases parameter"
     try:
         _require_workspace_name(workspace)
-        _require_tick_count(ticks)
+        await _require_tick_count_for_server(ticks)
         _require_test_cases(cases_list)
+        for case in cases_list:
+            await _require_tick_count_for_server(int(case.get("ticks", ticks)))
     except ValueError as exc:
         return _tool_error(exc)
 
@@ -927,7 +974,7 @@ async def probe(
         return "Invalid JSON in inputs or expected parameter"
     try:
         _require_workspace_name(workspace)
-        _require_tick_count(ticks)
+        await _require_tick_count_for_server(ticks)
         _require_signal_map(inputs_map, "inputs")
         _require_signal_map(expected_map, "expected")
     except ValueError as exc:
@@ -1070,7 +1117,7 @@ async def neighborhood(
     """Inspect a small local cube around one workspace-local coordinate."""
     try:
         _require_workspace_name(workspace)
-        _require_nonnegative_relative_coords(x, y, z)
+        await _require_workspace_relative_coords(workspace, x, y, z)
         if radius < 0 or radius > _MAX_WORKSPACE_SIZE:
             raise ValueError(f"radius must be between 0 and {_MAX_WORKSPACE_SIZE}")
     except ValueError as exc:
@@ -1289,8 +1336,8 @@ async def stability(
         return "Invalid JSON in inputs parameter"
     try:
         _require_workspace_name(workspace)
-        _require_tick_count(count)
-        _require_tick_count(quiet_ticks)
+        await _require_tick_count_for_server(count)
+        await _require_tick_count_for_server(quiet_ticks)
         _require_signal_map(inputs_map, "inputs")
     except ValueError as exc:
         return _tool_error(exc)
@@ -1407,7 +1454,7 @@ async def impact(
     """Estimate what nearby redstone components may be affected by changing one block."""
     try:
         _require_workspace_name(workspace)
-        _require_nonnegative_relative_coords(x, y, z)
+        await _require_workspace_relative_coords(workspace, x, y, z)
         if radius < 1 or radius > _MAX_WORKSPACE_SIZE:
             raise ValueError(f"radius must be between 1 and {_MAX_WORKSPACE_SIZE}")
     except ValueError as exc:
@@ -1476,7 +1523,7 @@ async def inspect(
 async def status() -> str:
     """Check connection health and server status (~20 tokens)."""
     try:
-        result = await _call("status")
+        result = await _get_server_info(force_refresh=True)
         return json.dumps(result, indent=2)
     except Exception as e:
         return f"Disconnected: {e}"

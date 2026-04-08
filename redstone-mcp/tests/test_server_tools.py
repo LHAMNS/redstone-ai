@@ -1,6 +1,8 @@
 import asyncio
 import json
 
+import pytest
+
 import redstone_mcp.server as server
 
 
@@ -98,6 +100,145 @@ def test_workspace_revert_calls_rpc(monkeypatch):
     assert calls == [("workspace.revert", {"name": "demo_ws"})]
 
 
+def test_workspace_create_accepts_dimension_64(monkeypatch):
+    calls = []
+
+    async def fake_call(method: str, params: dict | None = None):
+        calls.append((method, params))
+        return {"workspace": "demo_ws", "size": [64, 64, 64], "origin": [100, 64, 100]}
+
+    async def fake_server_info(force_refresh: bool = False):
+        return {"maxWorkspaceSize": 64, "maxStepsPerCall": 200, "maxRecordingTicks": 10000, "version": "0.1.0", "status": "ok"}
+
+    monkeypatch.setattr(server, "_call", fake_call)
+    monkeypatch.setattr(server, "_get_server_info", fake_server_info)
+
+    result = asyncio.run(server.workspace(action="create", name="demo_ws", sizeX=64, sizeY=64, sizeZ=64))
+
+    assert json.loads(result) == {
+        "workspace": "demo_ws",
+        "size": [64, 64, 64],
+        "coordinateSystem": "workspace_local",
+        "localOrigin": [0, 0, 0],
+        "localMax": [63, 63, 63],
+        "validRange": {"from": [0, 0, 0], "to": [63, 63, 63]},
+    }
+    assert calls == [("workspace.create", {"name": "demo_ws", "sizeX": 64, "sizeY": 64, "sizeZ": 64})]
+
+
+def test_workspace_create_rejects_dimension_65():
+    result = asyncio.run(server.workspace(action="create", name="demo_ws", sizeX=65, sizeY=8, sizeZ=8))
+
+    assert "Validation error:" in result
+    assert "workspace dimensions must be between 4 and 64" in result
+
+
+def test_workspace_create_reports_live_limit_lookup_failure(monkeypatch):
+    async def fake_server_info(force_refresh: bool = False):
+        raise RuntimeError("server.info unavailable")
+
+    monkeypatch.setattr(server, "_get_server_info", fake_server_info)
+
+    result = asyncio.run(server.workspace(action="create", name="demo_ws", sizeX=8, sizeY=8, sizeZ=8))
+
+    assert "Validation error:" in result
+    assert "could not fetch live server limits" in result
+
+
+def test_get_server_info_uses_cached_value_for_non_refresh_calls(monkeypatch):
+    calls = {"count": 0}
+    original_cache = server._SERVER_INFO_CACHE
+
+    async def fake_call(method: str, params: dict | None = None):
+        assert method == "server.info"
+        calls["count"] += 1
+        return {
+            "status": "ok",
+            "version": "1.2.3",
+            "maxWorkspaceSize": 48,
+            "maxStepsPerCall": 321,
+            "maxRecordingTicks": 654,
+        }
+
+    monkeypatch.setattr(server, "_call", fake_call)
+    server._SERVER_INFO_CACHE = None
+    try:
+        first = asyncio.run(server._get_server_info())
+        second = asyncio.run(server._get_server_info())
+    finally:
+        server._SERVER_INFO_CACHE = original_cache
+
+    assert first == second == {
+        "status": "ok",
+        "version": "1.2.3",
+        "maxWorkspaceSize": 48,
+        "maxStepsPerCall": 321,
+        "maxRecordingTicks": 654,
+    }
+    assert calls["count"] == 1
+
+
+def test_get_server_info_force_refresh_does_not_hide_disconnect(monkeypatch):
+    original_cache = server._SERVER_INFO_CACHE
+
+    async def fake_call(method: str, params: dict | None = None):
+        raise RuntimeError("temporary outage")
+
+    monkeypatch.setattr(server, "_call", fake_call)
+    server._SERVER_INFO_CACHE = {
+        "status": "ok",
+        "version": "1.2.3",
+        "maxWorkspaceSize": 48,
+        "maxStepsPerCall": 321,
+        "maxRecordingTicks": 654,
+    }
+    try:
+        result = asyncio.run(server.status())
+    finally:
+        server._SERVER_INFO_CACHE = original_cache
+
+    assert result == "Disconnected: temporary outage"
+
+
+def test_status_returns_live_server_info(monkeypatch):
+    original_cache = server._SERVER_INFO_CACHE
+
+    async def fake_call(method: str, params: dict | None = None):
+        assert method == "server.info"
+        return {
+            "status": "ok",
+            "version": "9.9.9",
+            "maxWorkspaceSize": 48,
+            "maxStepsPerCall": 222,
+            "maxRecordingTicks": 333,
+        }
+
+    monkeypatch.setattr(server, "_call", fake_call)
+    server._SERVER_INFO_CACHE = None
+    try:
+        result = asyncio.run(server.status())
+    finally:
+        server._SERVER_INFO_CACHE = original_cache
+
+    assert json.loads(result) == {
+        "status": "ok",
+        "version": "9.9.9",
+        "maxWorkspaceSize": 48,
+        "maxStepsPerCall": 222,
+        "maxRecordingTicks": 333,
+    }
+
+
+def test_relative_coord_ceiling_accepts_63():
+    server._require_nonnegative_relative_coords(63, 63, 63)
+
+
+@pytest.mark.parametrize("coords", [(-1, 0, 0), (0, -1, 0), (0, 0, -1), (64, 0, 0), (0, 64, 0), (0, 0, 64)])
+def test_relative_coord_ceiling_rejects_invalid_values(coords):
+    with pytest.raises(ValueError, match="relative coordinates must be between 0 and 63"):
+        server._require_nonnegative_relative_coords(*coords)
+
+
 def test_workspace_configure_rejects_invalid_permission():
     result = asyncio.run(
         server.workspace(
@@ -164,6 +305,29 @@ def test_build_block_properties_are_forwarded(monkeypatch):
     ]
 
 
+def test_build_mcr_rejects_out_of_bounds_for_workspace(monkeypatch):
+    calls = []
+
+    async def fake_call(method: str, params: dict | None = None):
+        calls.append((method, params))
+        if method == "workspace.info":
+            return {"size": [8, 4, 8]}
+        raise AssertionError("build.mcr should not be called for invalid MCR")
+
+    monkeypatch.setattr(server, "_call", fake_call)
+
+    result = asyncio.run(
+        server.build(
+            workspace="demo_ws",
+            mcr="@origin 8,0,0 #",
+        )
+    )
+
+    assert "Validation error:" in result
+    assert "exceeds workspace dimensions 8x4x8" in result
+    assert calls == [("workspace.info", {"name": "demo_ws"})]
+
+
 def test_probe_calls_test_run(monkeypatch):
     calls = []
 
@@ -171,7 +335,11 @@ def test_probe_calls_test_run(monkeypatch):
         calls.append((method, params))
         return {"actual": {"OUT": 15}, "pass": True}
 
+    async def fake_server_info(force_refresh: bool = False):
+        return {"maxWorkspaceSize": 64, "maxStepsPerCall": 200, "maxRecordingTicks": 10000, "version": "0.1.0", "status": "ok"}
+
     monkeypatch.setattr(server, "_call", fake_call)
+    monkeypatch.setattr(server, "_get_server_info", fake_server_info)
 
     result = asyncio.run(
         server.probe(
@@ -204,7 +372,11 @@ def test_time_settle_forwards_quiet_ticks(monkeypatch):
         calls.append((method, params))
         return {"stable": True, "stepped": 3}
 
+    async def fake_server_info(force_refresh: bool = False):
+        return {"maxWorkspaceSize": 64, "maxStepsPerCall": 200, "maxRecordingTicks": 10000, "version": "0.1.0", "status": "ok"}
+
     monkeypatch.setattr(server, "_call", fake_call)
+    monkeypatch.setattr(server, "_get_server_info", fake_server_info)
 
     result = asyncio.run(server.time(workspace="demo_ws", action="settle", count=12, quiet_ticks=3))
 
@@ -497,10 +669,44 @@ def test_neighborhood_scans_centered_crop(monkeypatch):
     text = asyncio.run(server.neighborhood("demo_ws", x=3, y=1, z=4, radius=2))
 
     assert "Neighborhood around (3,1,4) radius=2" in text
-    assert calls[1] == (
+    assert calls[-1] == (
         "workspace.scan",
         {"name": "demo_ws", "fromX": 1, "toX": 5, "fromY": 0, "toY": 3, "fromZ": 2, "toZ": 6},
     )
+
+
+def test_neighborhood_allows_radius_64(monkeypatch):
+    async def fake_scan_neighborhood(workspace: str, x: int, y: int, z: int, radius: int):
+        return {
+            "name": workspace,
+            "size": [64, 64, 64],
+            "validRange": {"from": [0, 0, 0], "to": [63, 63, 63]},
+            "viewRange": {"from": [0, 0, 0], "to": [63, 63, 63]},
+            "blocks": [],
+            "entities": [],
+            "ioMarkers": [],
+        }
+
+    async def fake_require_workspace_relative_coords(workspace: str, x: int, y: int, z: int) -> None:
+        return None
+
+    monkeypatch.setattr(server, "_scan_neighborhood", fake_scan_neighborhood)
+    monkeypatch.setattr(server, "_require_workspace_relative_coords", fake_require_workspace_relative_coords)
+
+    text = asyncio.run(server.neighborhood("demo_ws", x=63, y=63, z=63, radius=64))
+
+    assert "Neighborhood around (63,63,63) radius=64" in text
+
+
+def test_neighborhood_rejects_out_of_bounds_center(monkeypatch):
+    async def fake_require_workspace_relative_coords(workspace: str, x: int, y: int, z: int) -> None:
+        raise ValueError("relative coordinates exceed the workspace dimensions")
+
+    monkeypatch.setattr(server, "_require_workspace_relative_coords", fake_require_workspace_relative_coords)
+
+    text = asyncio.run(server.neighborhood("demo_ws", x=64, y=0, z=0, radius=2))
+
+    assert "Validation error: relative coordinates exceed the workspace dimensions" == text
 
 
 def test_baseline_diff_forwards_crop_window(monkeypatch):
@@ -596,6 +802,37 @@ def test_signal_graph_uses_scan(monkeypatch):
     assert calls[0][0] == "workspace.scan"
 
 
+def test_signal_graph_active_only_raw_filters_edges(monkeypatch):
+    async def fake_call(method: str, params: dict | None = None):
+        return {
+            "name": "demo_ws",
+            "origin": [1000, 64, 1000],
+            "controller": [1000, 72, 1000],
+            "size": [4, 4, 4],
+            "fromX": 0,
+            "toX": 3,
+            "fromY": 0,
+            "toY": 3,
+            "fromZ": 0,
+            "toZ": 3,
+            "blocks": [
+                {"x": 0, "y": 0, "z": 0, "block": "minecraft:lever", "properties": {"powered": "true"}},
+                {"x": 1, "y": 0, "z": 0, "block": "minecraft:redstone_wire", "properties": {}},
+                {"x": 2, "y": 0, "z": 0, "block": "minecraft:redstone_lamp", "properties": {}},
+            ],
+            "entities": [],
+            "ioMarkers": [],
+            "blockCounts": {},
+            "nonAirBlocks": 3,
+        }
+
+    monkeypatch.setattr(server, "_call", fake_call)
+    active_raw = json.loads(asyncio.run(server.signal_graph("demo_ws", view="raw", active_only=True)))
+    full_raw = json.loads(asyncio.run(server.signal_graph("demo_ws", view="raw", active_only=False)))
+    assert len(active_raw["graph"]["edges"]) < len(full_raw["graph"]["edges"])
+    assert active_raw["viewRange"] == {"from": [0, 0, 0], "to": [3, 3, 3]}
+
+
 def test_trace_path_uses_labels(monkeypatch):
     async def fake_call(method: str, params: dict | None = None):
         return {
@@ -627,6 +864,31 @@ def test_trace_path_uses_labels(monkeypatch):
     text = asyncio.run(server.trace_path("demo_ws", start_label="IN", end_label="OUT"))
     assert "Resolved source: 0,0,0" in text
     assert "Resolved target: 2,0,0" in text
+
+
+def test_trace_path_reports_unknown_endpoint_within_view_window(monkeypatch):
+    async def fake_call(method: str, params: dict | None = None):
+        return {
+            "name": "demo_ws",
+            "origin": [1000, 64, 1000],
+            "controller": [1000, 72, 1000],
+            "size": [4, 4, 4],
+            "fromX": 0,
+            "toX": 1,
+            "fromY": 0,
+            "toY": 1,
+            "fromZ": 0,
+            "toZ": 1,
+            "blocks": [{"x": 0, "y": 0, "z": 0, "block": "minecraft:lever", "properties": {}}],
+            "entities": [],
+            "ioMarkers": [{"label": "IN", "role": "input", "x": 0, "y": 0, "z": 0}],
+            "blockCounts": {},
+            "nonAirBlocks": 1,
+        }
+
+    monkeypatch.setattr(server, "_call", fake_call)
+    text = asyncio.run(server.trace_path("demo_ws", start_label="IN", end_label="OUT"))
+    assert "Unknown trace target within current view window" in text
 
 
 def test_watch_nodes_mark_uses_monitor_role(monkeypatch):
@@ -705,6 +967,40 @@ def test_impact_uses_neighborhood(monkeypatch):
     assert "Impact estimate for (3,1,3)" in text
 
 
+def test_impact_allows_radius_64(monkeypatch):
+    async def fake_scan_neighborhood(workspace: str, x: int, y: int, z: int, radius: int):
+        return {
+            "name": workspace,
+            "size": [64, 64, 64],
+            "validRange": {"from": [0, 0, 0], "to": [63, 63, 63]},
+            "viewRange": {"from": [0, 0, 0], "to": [63, 63, 63]},
+            "blocks": [],
+            "entities": [],
+            "ioMarkers": [],
+        }
+
+    async def fake_require_workspace_relative_coords(workspace: str, x: int, y: int, z: int) -> None:
+        return None
+
+    monkeypatch.setattr(server, "_scan_neighborhood", fake_scan_neighborhood)
+    monkeypatch.setattr(server, "_require_workspace_relative_coords", fake_require_workspace_relative_coords)
+
+    text = asyncio.run(server.impact("demo_ws", x=63, y=63, z=63, radius=64))
+
+    assert "Impact estimate for (63,63,63)" in text
+
+
+def test_impact_rejects_out_of_bounds_center(monkeypatch):
+    async def fake_require_workspace_relative_coords(workspace: str, x: int, y: int, z: int) -> None:
+        raise ValueError("relative coordinates exceed the workspace dimensions")
+
+    monkeypatch.setattr(server, "_require_workspace_relative_coords", fake_require_workspace_relative_coords)
+
+    text = asyncio.run(server.impact("demo_ws", x=64, y=0, z=0, radius=2))
+
+    assert "Validation error: relative coordinates exceed the workspace dimensions" == text
+
+
 def test_stability_reverts_when_isolated(monkeypatch):
     calls = []
 
@@ -738,7 +1034,17 @@ def test_stability_reverts_when_isolated(monkeypatch):
             }
         raise AssertionError(method)
 
+    async def fake_server_info(force_refresh: bool = False):
+        return {
+            "status": "ok",
+            "version": "0.1.0",
+            "maxWorkspaceSize": 64,
+            "maxStepsPerCall": 200,
+            "maxRecordingTicks": 10000,
+        }
+
     monkeypatch.setattr(server, "_call", fake_call)
+    monkeypatch.setattr(server, "_get_server_info", fake_server_info)
     text = asyncio.run(server.stability("demo_ws", count=3, quiet_ticks=2, isolated=True))
     assert "stable after 2 tick(s)" in text
     assert ("workspace.revert", {"name": "demo_ws"}) in calls

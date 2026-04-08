@@ -1,0 +1,10 @@
+Sync Python MCP updates: expanded MCR validation, new tests (65->92)
+
+- mcr.py: enhanced validate() with workspace-size-aware bounds checking,
+  facing/delay/mode modifier validation per block code, @fill modifier rejection
+- errors.py: updates from external development
+- server.py: updates from external development
+- tests: 27 new tests covering MCR bounds validation, analysis tools,
+  server tool contracts
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>

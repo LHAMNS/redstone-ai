@@ -9,7 +9,7 @@ def test_valid_simple():
 
 
 def test_valid_with_modifiers():
-    valid, err = validate("Rn2 Ces Tw")
+    valid, err = validate("Rn2 Cex Ww")
     assert valid, err
 
 
@@ -28,6 +28,18 @@ def test_invalid_modifier():
     valid, err = validate("Rq")
     assert not valid
     assert "Unknown modifier" in err
+
+
+def test_invalid_facing_modifier_for_stone():
+    valid, err = validate("#n")
+    assert not valid
+    assert "does not support facing modifiers" in err
+
+
+def test_fill_rejects_modifiers():
+    valid, err = validate("@fill Rn2")
+    assert not valid
+    assert "@fill does not support modifiers" in err
 
 
 def test_origin_missing_coords():
@@ -73,3 +85,15 @@ def test_fill_invalid_code():
     valid, err = validate("@fill Z")
     assert not valid
     assert "Unknown block code" in err
+
+
+def test_validate_rejects_negative_workspace_local_origin():
+    valid, err = validate("@origin -1,0,0 #", size_x=8, size_y=4, size_z=8)
+    assert not valid
+    assert "workspace-local and non-negative" in err
+
+
+def test_validate_rejects_out_of_bounds_workspace_local_origin():
+    valid, err = validate("@origin 8,0,0 #", size_x=8, size_y=4, size_z=8)
+    assert not valid
+    assert "exceeds workspace dimensions 8x4x8" in err
