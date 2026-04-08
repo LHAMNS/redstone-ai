@@ -5,7 +5,6 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
-import net.minecraft.server.level.ServerPlayer;
 import com.redstoneai.workspace.InitialSnapshot;
 import com.redstoneai.config.RAIConfig;
 import com.redstoneai.mcr.MCRBlock;
@@ -21,7 +20,10 @@ import com.redstoneai.workspace.ProtectionMode;
 import com.redstoneai.workspace.Workspace;
 import com.redstoneai.workspace.WorkspaceControllerBlockEntity;
 import com.redstoneai.workspace.WorkspaceManager;
+import com.redstoneai.workspace.WorkspaceMutationSource;
+import com.redstoneai.workspace.WorkspaceRevertService;
 import com.redstoneai.workspace.WorkspaceRules;
+import com.redstoneai.workspace.WorkspaceTemporalState;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -357,10 +359,20 @@ public final class RAICommands {
         Workspace ws = WorkspaceManager.get(level).getByName(name);
         if (ws == null) { ctx.getSource().sendFailure(Component.literal("Workspace '" + name + "' not found")); return 0; }
         if (!ws.isFrozen()) { ctx.getSource().sendFailure(Component.literal("Must be frozen to step")); return 0; }
+        if (!ws.getTemporalState().canStep()) {
+            ctx.getSource().sendFailure(Component.literal("Cannot step while workspace is " + ws.getTemporalState().getSerializedName() + "; fast-forward to head or revert first"));
+            return 0;
+        }
         if (!WorkspaceRules.isValidTickCount(count)) { ctx.getSource().sendFailure(Component.literal("Step count exceeds configured maximum")); return 0; }
         if (!checkManagePermission(ctx, ws)) return 0;
 
-        int stepped = TickController.step(level, ws, count);
+        final int stepped;
+        try {
+            stepped = TickController.step(level, ws, count);
+        } catch (IllegalStateException e) {
+            ctx.getSource().sendFailure(Component.literal("Virtual step failed and workspace entered corrupted temporal state; revert is required"));
+            return 0;
+        }
         ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] Stepped " + stepped + " tick(s) (vtick: " + ws.getVirtualTick() + ")").withStyle(ChatFormatting.AQUA), false);
         return stepped;
     }
@@ -373,6 +385,10 @@ public final class RAICommands {
         Workspace ws = WorkspaceManager.get(level).getByName(name);
         if (ws == null) { ctx.getSource().sendFailure(Component.literal("Workspace '" + name + "' not found")); return 0; }
         if (!ws.isFrozen()) { ctx.getSource().sendFailure(Component.literal("Must be frozen to rewind")); return 0; }
+        if (ws.getTemporalState() == WorkspaceTemporalState.FROZEN_CORRUPTED) {
+            ctx.getSource().sendFailure(Component.literal("Workspace temporal state is corrupted; revert is required"));
+            return 0;
+        }
         if (!WorkspaceRules.isValidTickCount(count)) { ctx.getSource().sendFailure(Component.literal("Rewind count exceeds configured maximum")); return 0; }
 
         RecordingTimeline timeline = ws.getTimeline();
@@ -397,6 +413,10 @@ public final class RAICommands {
         Workspace ws = WorkspaceManager.get(level).getByName(name);
         if (ws == null) { ctx.getSource().sendFailure(Component.literal("Workspace '" + name + "' not found")); return 0; }
         if (!ws.isFrozen()) { ctx.getSource().sendFailure(Component.literal("Must be frozen to fast-forward")); return 0; }
+        if (ws.getTemporalState() == WorkspaceTemporalState.FROZEN_CORRUPTED) {
+            ctx.getSource().sendFailure(Component.literal("Workspace temporal state is corrupted; revert is required"));
+            return 0;
+        }
         if (!WorkspaceRules.isValidTickCount(count)) { ctx.getSource().sendFailure(Component.literal("Fast-forward count exceeds configured maximum")); return 0; }
 
         RecordingTimeline timeline = ws.getTimeline();
@@ -405,7 +425,13 @@ public final class RAICommands {
             return 0;
         }
 
-        int advanced = TickController.replayThenStep(level, ws, count);
+        int availableFuture = Math.max(0, timeline.getLength() - (timeline.getCurrentIndex() + 1));
+        if (count > availableFuture) {
+            ctx.getSource().sendFailure(Component.literal("Cannot fast-forward " + count + " ticks; only " + availableFuture + " future tick(s) recorded"));
+            return 0;
+        }
+
+        int advanced = TickController.fastForward(level, ws, count);
         ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] Advanced " + advanced + " tick(s) (vtick: " + ws.getVirtualTick() + ")").withStyle(ChatFormatting.GOLD), false);
         return advanced;
     }
@@ -432,6 +458,10 @@ public final class RAICommands {
         }
         if (ws.isControllerPos(worldPos)) {
             ctx.getSource().sendFailure(Component.literal("Cannot mark the controller block position"));
+            return 0;
+        }
+        if (ws.hasIOMarkerLabel(label, worldPos)) {
+            ctx.getSource().sendFailure(Component.literal("IO label '" + label + "' is already in use"));
             return 0;
         }
 
@@ -526,7 +556,7 @@ public final class RAICommands {
             }
 
             MCRPlacer.PlaceResult result = MCRPlacer.place(level, ws, blocks);
-            TickController.invalidateRecording(level, ws);
+            TickController.invalidateRecording(level, ws, WorkspaceMutationSource.BUILD);
             ctx.getSource().sendSuccess(() -> Component.literal("[RedstoneAI] Placed " + result.placed() + " block(s)" +
                     (result.skipped() > 0 ? ", " + result.skipped() + " skipped (out of bounds)" : ""))
                     .withStyle(ChatFormatting.GREEN), false);
@@ -557,48 +587,14 @@ public final class RAICommands {
             return 0;
         }
 
-        BoundingBox previousBounds = ws.getBounds();
-        BlockPos previousOrigin = ws.getOriginPos();
-
-        // Discard frozen state BEFORE updating geometry so chunk tickets
-        // are released using the old bounds, preventing ticket leaks.
-        if (ws.isFrozen()) {
-            TickController.discardFrozenState(level, ws, previousBounds, previousOrigin);
-        }
-        ws.setTimeline(null);
-        ws.setVirtualTick(0);
-        TickController.removeQueue(ws.getId());
-
-        int changed = snapshot.restore(level);
-        BlockPos restoredControllerPos = snapshot.getControllerPos() != null ? snapshot.getControllerPos() : controllerPos;
-        WorkspaceControllerBlockEntity restoredController = level.getBlockEntity(restoredControllerPos) instanceof WorkspaceControllerBlockEntity restored
-                ? restored
-                : be;
-
-        WorkspaceManager manager = WorkspaceManager.get(level);
-        manager.updateWorkspaceGeometry(
-                ws,
-                snapshot.getBounds(),
-                restoredControllerPos,
-                WorkspaceRules.originFromBounds(snapshot.getBounds())
-        );
-
-        ws.setProtectionMode(restoredController.getProtectionMode());
-        ws.setEntityFilterMode(restoredController.getEntityFilterMode());
-        ws.replaceAuthorizedPlayers(restoredController.getAuthorizedPlayers());
-        ws.replacePlayerPermissionGrants(restoredController.getPlayerPermissionGrants());
-        ws.setAllowVanillaCommands(restoredController.isAllowVanillaCommands());
-        ws.setAllowFrozenEntityTeleport(restoredController.isAllowFrozenEntityTeleport());
-        ws.setAllowFrozenEntityDamage(restoredController.isAllowFrozenEntityDamage());
-        ws.setAllowFrozenEntityCollision(restoredController.isAllowFrozenEntityCollision());
-        restoredController.setInitialSnapshot(snapshot);
-        restoredController.getOperationLog().logSystem("revert", "Reverted " + changed + " blocks to initial state");
+        WorkspaceRevertService.Result result = WorkspaceRevertService.revert(level, ws, be, snapshot);
+        result.restoredController().getOperationLog().logSystem("revert", "Reverted " + result.changedBlocks() + " blocks to initial state");
 
         ctx.getSource().sendSuccess(() ->
                 Component.literal("[RedstoneAI] Reverted workspace '" + name + "' — " +
-                        changed + " block(s) restored to initial state")
+                        result.changedBlocks() + " block(s) restored to initial state")
                         .withStyle(ChatFormatting.GOLD), true);
-        return changed;
+        return result.changedBlocks();
     }
 
     // ==================== Utility ====================

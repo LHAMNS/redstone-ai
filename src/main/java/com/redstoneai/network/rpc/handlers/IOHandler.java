@@ -37,6 +37,10 @@ public class IOHandler {
         if (!WorkspaceRules.isEditableBlock(ws, worldPos)) {
             throw new JsonRpcException(-32602, "Position out of bounds or is the controller block");
         }
+        if (ws.hasIOMarkerLabel(label, worldPos)) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                    "IO label '" + label + "' is already in use");
+        }
 
         IOMarker.IORole parsedRole = IOMarker.IORole.tryParse(role);
         if (parsedRole == null) {

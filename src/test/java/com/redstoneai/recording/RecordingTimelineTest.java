@@ -1,12 +1,15 @@
 package com.redstoneai.recording;
 
+import com.redstoneai.tick.FrozenTickQueue;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -102,5 +105,38 @@ class RecordingTimelineTest {
         RecordingTimeline timeline = new RecordingTimeline(100);
         assertNull(timeline.getDelta(0));
         assertNull(timeline.getDelta(-1));
+    }
+
+    @Test
+    void nbtRoundTripPreservesTimelineCursorAndQueueState() {
+        RecordingTimeline timeline = new RecordingTimeline(100);
+        TickSnapshot.EntitySnapshot entitySnapshot = new TickSnapshot.EntitySnapshot(
+                UUID.randomUUID(),
+                "minecraft:armor_stand",
+                new CompoundTag()
+        );
+        timeline.setBaseSnapshot(
+                Map.of(),
+                Map.of(),
+                List.of(entitySnapshot),
+                new FrozenTickQueue.QueueState(List.of(), List.of(), List.of(), List.of())
+        );
+        timeline.addDelta(new TickSnapshot(
+                0,
+                Map.of(),
+                Map.of(),
+                List.of(entitySnapshot),
+                List.of(entitySnapshot),
+                new FrozenTickQueue.QueueState(List.of(), List.of(), List.of(), List.of()),
+                new FrozenTickQueue.QueueState(List.of(), List.of(), List.of(), List.of())
+        ));
+
+        CompoundTag saved = timeline.save();
+        RecordingTimeline restored = RecordingTimeline.load(saved);
+
+        assertEquals(1, restored.getLength());
+        assertEquals(0, restored.getCurrentIndex());
+        assertEquals(1, restored.getBaseEntityStates().size());
+        assertEquals(0, restored.getCurrentQueueState().blockTicks().size());
     }
 }

@@ -2,7 +2,11 @@ package com.redstoneai.recording;
 
 import com.redstoneai.tick.FrozenTickQueue;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtUtils;
+import net.minecraft.nbt.Tag;
 import net.minecraft.world.level.block.state.BlockState;
 
 import javax.annotation.Nullable;
@@ -133,8 +137,68 @@ public class RecordingTimeline {
         return baseQueueState;
     }
 
+    public FrozenTickQueue.QueueState getCurrentQueueState() {
+        if (currentIndex < 0) {
+            return baseQueueState;
+        }
+        TickSnapshot current = getDelta(currentIndex);
+        return current != null ? current.queueAfter() : baseQueueState;
+    }
+
     public List<TickSnapshot> getDeltas() {
         return deltas;
+    }
+
+    public CompoundTag save() {
+        CompoundTag tag = new CompoundTag();
+        tag.putInt("maxTicks", maxTicks);
+        tag.putInt("currentIndex", currentIndex);
+        tag.put("baseBlocks", saveBaseBlocks());
+        tag.put("baseEntityStates", saveBaseEntityStates());
+        tag.put("baseQueueState", FrozenTickQueue.saveQueueState(baseQueueState));
+
+        ListTag deltaList = new ListTag();
+        for (TickSnapshot delta : deltas) {
+            deltaList.add(delta.save());
+        }
+        tag.put("deltas", deltaList);
+        return tag;
+    }
+
+    public static RecordingTimeline load(CompoundTag tag) {
+        RecordingTimeline timeline = new RecordingTimeline(tag.getInt("maxTicks"));
+        timeline.currentIndex = tag.getInt("currentIndex");
+
+        ListTag baseBlockList = tag.getList("baseBlocks", Tag.TAG_COMPOUND);
+        for (int i = 0; i < baseBlockList.size(); i++) {
+            CompoundTag blockTag = baseBlockList.getCompound(i);
+            BlockPos pos = readPos(blockTag, "pos");
+            BlockState state = NbtUtils.readBlockState(BuiltInRegistries.BLOCK.asLookup(), blockTag.getCompound("state"));
+            timeline.baseSnapshot.put(pos, state);
+            if (blockTag.contains("tile", Tag.TAG_COMPOUND)) {
+                timeline.baseTileEntities.put(pos, blockTag.getCompound("tile").copy());
+            }
+        }
+
+        ListTag baseEntityList = tag.getList("baseEntityStates", Tag.TAG_COMPOUND);
+        for (int i = 0; i < baseEntityList.size(); i++) {
+            TickSnapshot.EntitySnapshot snapshot = TickSnapshot.EntitySnapshot.load(baseEntityList.getCompound(i));
+            timeline.baseEntityStates.put(snapshot.entityUUID(), snapshot);
+        }
+
+        if (tag.contains("baseQueueState", Tag.TAG_COMPOUND)) {
+            timeline.baseQueueState = FrozenTickQueue.loadQueueState(tag.getCompound("baseQueueState"));
+        }
+
+        ListTag deltaList = tag.getList("deltas", Tag.TAG_COMPOUND);
+        for (int i = 0; i < deltaList.size(); i++) {
+            timeline.deltas.add(TickSnapshot.load(deltaList.getCompound(i)));
+        }
+
+        if (timeline.currentIndex >= timeline.deltas.size()) {
+            timeline.currentIndex = timeline.deltas.size() - 1;
+        }
+        return timeline;
     }
 
     private void rebaseFromEvictedDelta(TickSnapshot delta) {
@@ -158,5 +222,36 @@ public class RecordingTimeline {
             baseEntityStates.put(entityState.entityUUID(), entityState);
         }
         baseQueueState = delta.queueAfter();
+    }
+
+    private ListTag saveBaseBlocks() {
+        ListTag list = new ListTag();
+        for (Map.Entry<BlockPos, BlockState> entry : baseSnapshot.entrySet()) {
+            CompoundTag blockTag = new CompoundTag();
+            blockTag.putIntArray("pos", new int[]{entry.getKey().getX(), entry.getKey().getY(), entry.getKey().getZ()});
+            blockTag.put("state", NbtUtils.writeBlockState(entry.getValue()));
+            CompoundTag tile = baseTileEntities.get(entry.getKey());
+            if (tile != null) {
+                blockTag.put("tile", tile.copy());
+            }
+            list.add(blockTag);
+        }
+        return list;
+    }
+
+    private ListTag saveBaseEntityStates() {
+        ListTag list = new ListTag();
+        for (TickSnapshot.EntitySnapshot snapshot : baseEntityStates.values()) {
+            list.add(snapshot.save());
+        }
+        return list;
+    }
+
+    private static BlockPos readPos(CompoundTag tag, String key) {
+        int[] pos = tag.getIntArray(key);
+        if (pos.length < 3) {
+            throw new IllegalStateException("Corrupted recording timeline: " + key + " is missing coordinates");
+        }
+        return new BlockPos(pos[0], pos[1], pos[2]);
     }
 }

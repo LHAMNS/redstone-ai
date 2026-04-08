@@ -21,13 +21,16 @@ import com.redstoneai.tick.TickController;
 import com.redstoneai.workspace.Workspace;
 import com.redstoneai.workspace.WorkspaceAccessControl;
 import com.redstoneai.workspace.WorkspaceManager;
+import com.redstoneai.workspace.WorkspaceMutationSource;
 import com.redstoneai.workspace.WorkspaceRules;
+import com.redstoneai.workspace.WorkspaceTemporalState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.item.ItemStack;
@@ -108,6 +111,24 @@ public class RAIGameTests {
             helper.fail("Should throw");
         } catch (MCRParser.MCRParseException e) {
             helper.assertTrue(e.getMessage().contains("Unknown block code"), "msg");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "mcr")
+    public static void mcr_rejects_unsupported_modifiers(GameTestHelper helper) {
+        try {
+            MCRParser.parse("#n");
+            helper.fail("Stone should not accept facing modifiers");
+        } catch (MCRParser.MCRParseException e) {
+            helper.assertTrue(e.getMessage().contains("does not support facing modifiers"), "unsupported facing rejected");
+        }
+
+        try {
+            MCRParser.parse("@fill Rn2");
+            helper.fail("@fill should not accept modifiers");
+        } catch (MCRParser.MCRParseException e) {
+            helper.assertTrue(e.getMessage().contains("@fill does not support modifiers"), "fill modifiers rejected");
         }
         helper.succeed();
     }
@@ -780,6 +801,173 @@ public class RAIGameTests {
     }
 
     @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void settle_rejects_rewound_workspace(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(9, 7, 3));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), WorkspaceRules.API_OWNER, "gt_settle_rewound", controllerPos, bounds);
+        WorkspaceManager.get(level).addWorkspace(ws);
+
+        try {
+            TickController.freeze(level, ws);
+            helper.assertTrue(TickController.step(level, ws, 2) == 2, "seeded history");
+            helper.assertTrue(TickController.rewind(level, ws, 1) == 1, "rewound one tick");
+
+            JsonObject params = new JsonObject();
+            params.addProperty("workspace", ws.getName());
+            params.addProperty("count", 4);
+            params.addProperty("quietTicks", 2);
+
+            try {
+                new SimulationHandler().settle(new JsonRpcRequest("1", "sim.settle", params), level.getServer());
+                helper.fail("Expected settle on rewound workspace to be rejected");
+            } catch (JsonRpcException e) {
+                helper.assertTrue(e.getMessage().contains("Cannot settle"), "rewound settle rejection message");
+            }
+        } finally {
+            if (ws.isFrozen()) {
+                TickController.unfreeze(level, ws);
+            }
+            TickController.removeQueue(ws.getId());
+            WorkspaceManager.get(level).removeWorkspace("gt_settle_rewound");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void step_rejects_rewound_workspace(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(10, 7, 3));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), WorkspaceRules.API_OWNER, "gt_step_rewound", controllerPos, bounds);
+        WorkspaceManager.get(level).addWorkspace(ws);
+
+        try {
+            TickController.freeze(level, ws);
+            helper.assertTrue(TickController.step(level, ws, 2) == 2, "seeded history");
+            helper.assertTrue(TickController.rewind(level, ws, 1) == 1, "rewound one tick");
+            int beforeTick = ws.getVirtualTick();
+
+            JsonObject params = new JsonObject();
+            params.addProperty("workspace", ws.getName());
+            params.addProperty("count", 1);
+
+            try {
+                new SimulationHandler().step(new JsonRpcRequest("1", "sim.step", params), level.getServer());
+                helper.fail("Expected step on rewound workspace to be rejected");
+            } catch (JsonRpcException e) {
+                helper.assertTrue(e.getMessage().contains("Cannot step"), "rewound step rejection message");
+            }
+            helper.assertTrue(ws.getVirtualTick() == beforeTick, "virtual tick unchanged after rejected step");
+        } finally {
+            if (ws.isFrozen()) {
+                TickController.unfreeze(level, ws);
+            }
+            TickController.removeQueue(ws.getId());
+            WorkspaceManager.get(level).removeWorkspace("gt_step_rewound");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 120)
+    public static void workspace_temporal_state_transitions_are_explicit(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(11, 7, 3));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), WorkspaceRules.API_OWNER, "gt_temporal_state", controllerPos, bounds);
+        WorkspaceManager.get(level).addWorkspace(ws);
+
+        try {
+            helper.assertTrue(ws.getTemporalState() == WorkspaceTemporalState.LIVE, "workspace starts live");
+            helper.assertTrue(ws.getLastMutationSource() == WorkspaceMutationSource.NONE, "initial mutation source is none");
+
+            TickController.freeze(level, ws);
+            helper.assertTrue(ws.getTemporalState() == WorkspaceTemporalState.FROZEN_AT_HEAD, "freeze enters frozen_at_head");
+            helper.assertTrue(ws.getLastMutationSource() == WorkspaceMutationSource.FREEZE, "freeze source tracked");
+
+            level.setBlock(ws.toWorldPos(0, 0, 0), Blocks.STONE.defaultBlockState(), 3);
+            TickController.invalidateRecording(level, ws, WorkspaceMutationSource.BUILD);
+            helper.assertTrue(ws.getTemporalState() == WorkspaceTemporalState.FROZEN_DIRTY, "external mutation enters frozen_dirty");
+            helper.assertTrue(ws.getLastMutationSource() == WorkspaceMutationSource.BUILD, "build source tracked");
+            helper.assertTrue(ws.getVirtualTick() == 0, "invalidate resets virtual tick");
+
+            helper.assertTrue(TickController.step(level, ws, 1) == 1, "dirty workspace can step");
+            helper.assertTrue(ws.getTemporalState() == WorkspaceTemporalState.FROZEN_AT_HEAD, "step returns to head");
+            helper.assertTrue(ws.getLastMutationSource() == WorkspaceMutationSource.STEP, "step source tracked");
+
+            helper.assertTrue(TickController.rewind(level, ws, 1) == 1, "rewind works");
+            helper.assertTrue(ws.getTemporalState() == WorkspaceTemporalState.FROZEN_REWOUND, "rewind enters rewound");
+            helper.assertTrue(ws.getLastMutationSource() == WorkspaceMutationSource.REWIND, "rewind source tracked");
+
+            helper.assertTrue(TickController.fastForward(level, ws, 1) == 1, "fast-forward replays future");
+            helper.assertTrue(ws.getTemporalState() == WorkspaceTemporalState.FROZEN_AT_HEAD, "fast-forward returns to head");
+            helper.assertTrue(ws.getLastMutationSource() == WorkspaceMutationSource.FAST_FORWARD, "fast-forward source tracked");
+
+            TickController.unfreeze(level, ws);
+            helper.assertTrue(ws.getTemporalState() == WorkspaceTemporalState.LIVE, "unfreeze returns to live");
+        } finally {
+            if (ws.isFrozen()) {
+                TickController.unfreeze(level, ws);
+            }
+            TickController.removeQueue(ws.getId());
+            WorkspaceManager.get(level).removeWorkspace("gt_temporal_state");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 160)
+    public static void workspace_revert_clears_non_player_entities(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        WorkspaceHandler handler = new WorkspaceHandler();
+        EntityHandler entityHandler = new EntityHandler();
+        String name = "gt_revert_entities";
+
+        try {
+            JsonObject createParams = new JsonObject();
+            createParams.addProperty("name", name);
+            createParams.addProperty("sizeX", 6);
+            createParams.addProperty("sizeY", 4);
+            createParams.addProperty("sizeZ", 6);
+            handler.create(new JsonRpcRequest("revert-entities-create", "workspace.create", createParams), level.getServer());
+
+            Workspace ws = WorkspaceManager.get(level).getByName(name);
+            helper.assertTrue(ws != null, "workspace created");
+
+            JsonObject spawnParams = new JsonObject();
+            spawnParams.addProperty("workspace", name);
+            spawnParams.addProperty("entityType", "minecraft:armor_stand");
+            spawnParams.addProperty("x", 1.5);
+            spawnParams.addProperty("y", 0.0);
+            spawnParams.addProperty("z", 1.5);
+            spawnParams.addProperty("nbt", "{NoGravity:1b}");
+            JsonObject spawned = entityHandler.spawn(new JsonRpcRequest("revert-entities-spawn", "entity.spawn", spawnParams), level.getServer())
+                    .getAsJsonObject();
+            UUID spawnedUuid = UUID.fromString(spawned.get("uuid").getAsString());
+
+            JsonObject revertParams = new JsonObject();
+            revertParams.addProperty("name", name);
+            JsonObject reverted = handler.revert(new JsonRpcRequest("revert-entities-revert", "workspace.revert", revertParams), level.getServer())
+                    .getAsJsonObject();
+
+            helper.assertTrue(reverted.get("restoredBlocks").getAsInt() >= 0, "revert succeeded");
+            helper.assertTrue(level.getEntity(spawnedUuid) == null, "revert clears non-player entities from workspace volume");
+            helper.assertTrue("revert".equals(reverted.get("lastMutationSource").getAsString()), "revert exposes mutation source");
+        } catch (JsonRpcException e) {
+            helper.fail("Revert should clear entities: " + e.getMessage());
+        } finally {
+            Workspace existing = WorkspaceManager.get(level).getByName(name);
+            if (existing != null) {
+                if (existing.isFrozen()) {
+                    TickController.unfreeze(level, existing);
+                }
+                TickController.removeQueue(existing.getId());
+                WorkspaceManager.get(level).removeWorkspace(name);
+            }
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
     public static void suite_restores_frozen_queue_and_virtual_tick(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         BlockPos abs = helper.absolutePos(BlockPos.ZERO);
@@ -958,8 +1146,13 @@ public class RAIGameTests {
             helper.assertTrue(scannedChest.get("nbt").getAsString().contains("Items"), "block entity NBT captured");
             helper.assertTrue(result.getAsJsonArray("entities").size() == 1, "entity scanned");
             JsonObject scannedEntity = result.getAsJsonArray("entities").get(0).getAsJsonObject();
-            helper.assertTrue(scannedEntity.has("uuid"), "entity uuid captured");
-            helper.assertTrue(scannedEntity.has("exactX"), "entity exactX captured");
+            helper.assertTrue(scannedEntity.get("uuid").getAsString().equals(itemEntity.getUUID().toString()), "entity uuid captured");
+            helper.assertTrue(scannedEntity.get("x").getAsInt() == 1, "entity relative x captured");
+            helper.assertTrue(scannedEntity.get("y").getAsInt() == 1, "entity relative y captured");
+            helper.assertTrue(scannedEntity.get("z").getAsInt() == 1, "entity relative z captured");
+            helper.assertTrue(Math.abs(scannedEntity.get("exactX").getAsDouble() - 1.5D) < 0.01D, "entity exactX captured");
+            helper.assertTrue(Math.abs(scannedEntity.get("exactY").getAsDouble() - 1.0D) < 0.01D, "entity exactY captured");
+            helper.assertTrue(Math.abs(scannedEntity.get("exactZ").getAsDouble() - 1.5D) < 0.01D, "entity exactZ captured");
             helper.assertTrue(scannedEntity.get("nbt").getAsString()
                     .contains("minecraft:comparator"), "entity NBT captured");
         } catch (JsonRpcException e) {
@@ -1211,27 +1404,39 @@ public class RAIGameTests {
             ws = WorkspaceManager.get(level).getByName(name);
             helper.assertTrue(ws != null, "workspace created");
 
+            int previousLogSize = 0;
             for (int i = 0; i < 2; i++) {
-                JsonObject configureParams = new JsonObject();
-                configureParams.addProperty("name", name);
-                configureParams.addProperty("mode", i == 0 ? "collaborative" : "ai_only");
-                configureParams.addProperty("allowVanillaCommands", i == 0);
-                handler.configure(new JsonRpcRequest("cfg" + i, "workspace.configure", configureParams), level.getServer());
+            JsonObject configureParams = new JsonObject();
+            configureParams.addProperty("name", name);
+            configureParams.addProperty("mode", i == 0 ? "collaborative" : "ai_only");
+            configureParams.addProperty("allowVanillaCommands", i == 0);
+            handler.configure(new JsonRpcRequest("cfg" + i, "workspace.configure", configureParams), level.getServer());
+                helper.assertTrue(ws.getProtectionMode() == (i == 0 ? com.redstoneai.workspace.ProtectionMode.COLLABORATIVE : com.redstoneai.workspace.ProtectionMode.AI_ONLY),
+                        "workspace mode updated for cycle " + i);
+                helper.assertTrue(ws.isAllowVanillaCommands() == (i == 0), "command protection flag updated for cycle " + i);
 
                 BlockPos changedPos = ws.toWorldPos(i, 0, i);
+                var baselineState = level.getBlockState(changedPos);
                 level.setBlock(changedPos, i == 0 ? Blocks.STONE.defaultBlockState() : Blocks.GLASS.defaultBlockState(), 3);
                 JsonObject revertParams = new JsonObject();
                 revertParams.addProperty("name", name);
                 JsonObject reverted = handler.revert(new JsonRpcRequest("rev" + i, "workspace.revert", revertParams), level.getServer())
                         .getAsJsonObject();
                 helper.assertTrue(reverted.get("hasSnapshot").getAsBoolean(), "snapshot retained after revert cycle");
+                helper.assertTrue(level.getBlockState(changedPos).equals(baselineState), "revert restored mutated block for cycle " + i);
 
                 JsonObject historyParams = new JsonObject();
                 historyParams.addProperty("name", name);
                 historyParams.addProperty("limit", 20);
                 JsonObject history = handler.history(new JsonRpcRequest("hist" + i, "workspace.history", historyParams), level.getServer())
                         .getAsJsonObject();
-                helper.assertTrue(history.getAsJsonArray("logEntries").size() >= 2, "history retains config/revert entries");
+                JsonArray logEntries = history.getAsJsonArray("logEntries");
+                helper.assertTrue(logEntries.size() >= previousLogSize + 2, "history appends config/revert entries each cycle");
+                helper.assertTrue(logEntries.get(logEntries.size() - 1).getAsJsonObject().get("action").getAsString().equals("revert"),
+                        "latest history action is revert");
+                helper.assertTrue(logEntries.get(logEntries.size() - 2).getAsJsonObject().get("action").getAsString().equals("config"),
+                        "revert preceded by config action");
+                previousLogSize = logEntries.size();
             }
         } catch (JsonRpcException e) {
             helper.fail("Config/history/revert cycle should succeed: " + e.getMessage());
@@ -1399,6 +1604,36 @@ public class RAIGameTests {
     }
 
     @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void entity_handler_rejects_passenger_tree_out_of_bounds(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(5, 7, 7));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), WorkspaceRules.API_OWNER, "gt_entity_passengers", controllerPos, bounds);
+        WorkspaceManager.get(level).addWorkspace(ws);
+
+        try {
+            JsonObject spawnParams = new JsonObject();
+            spawnParams.addProperty("workspace", ws.getName());
+            spawnParams.addProperty("entityType", "minecraft:boat");
+            spawnParams.addProperty("x", 4.8);
+            spawnParams.addProperty("y", 0.0);
+            spawnParams.addProperty("z", 1.5);
+            spawnParams.addProperty("nbt",
+                    "{Passengers:[{id:\"minecraft:armor_stand\",Pos:[" + (ws.getOriginPos().getX() + 8.0) + "d," + ws.getOriginPos().getY() + "d," + (ws.getOriginPos().getZ() + 1.5) + "d]}]}");
+
+            try {
+                new EntityHandler().spawn(new JsonRpcRequest("1", "entity.spawn", spawnParams), level.getServer());
+                helper.fail("Expected passenger tree outside workspace to be rejected");
+            } catch (JsonRpcException e) {
+                helper.assertTrue(e.getCode() == JsonRpcException.INVALID_PARAMS, "passenger tree invalid params code");
+            }
+        } finally {
+            WorkspaceManager.get(level).removeWorkspace("gt_entity_passengers");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
     public static void io_handler_rejects_controller_position_mark(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         BlockPos abs = helper.absolutePos(BlockPos.ZERO);
@@ -1449,6 +1684,198 @@ public class RAIGameTests {
             helper.assertTrue("A".equals(marker.label()), "marker label preserved");
         } finally {
             WorkspaceManager.get(level).removeWorkspace("gt_cmd_io_mark");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void io_handler_rejects_duplicate_labels(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(25, 7, 25));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), WorkspaceRules.API_OWNER, "gt_io_dup_label", controllerPos, bounds);
+        WorkspaceManager.get(level).addWorkspace(ws);
+        level.setBlock(ws.toWorldPos(0, 0, 0), Blocks.LEVER.defaultBlockState(), 3);
+        level.setBlock(ws.toWorldPos(1, 0, 0), Blocks.LEVER.defaultBlockState(), 3);
+
+        try {
+            JsonObject first = new JsonObject();
+            first.addProperty("workspace", ws.getName());
+            first.addProperty("x", 0);
+            first.addProperty("y", 0);
+            first.addProperty("z", 0);
+            first.addProperty("role", "input");
+            first.addProperty("label", "A");
+            try {
+                new IOHandler().mark(new JsonRpcRequest("1", "mark", first), level.getServer());
+            } catch (JsonRpcException e) {
+                helper.fail("Initial IO label should be accepted: " + e.getMessage());
+            }
+
+            JsonObject duplicate = new JsonObject();
+            duplicate.addProperty("workspace", ws.getName());
+            duplicate.addProperty("x", 1);
+            duplicate.addProperty("y", 0);
+            duplicate.addProperty("z", 0);
+            duplicate.addProperty("role", "input");
+            duplicate.addProperty("label", "A");
+
+            try {
+                new IOHandler().mark(new JsonRpcRequest("2", "mark", duplicate), level.getServer());
+                helper.fail("Expected duplicate IO label to be rejected");
+            } catch (JsonRpcException e) {
+                helper.assertTrue(e.getCode() == JsonRpcException.INVALID_PARAMS, "duplicate label invalid params");
+            }
+        } finally {
+            WorkspaceManager.get(level).removeWorkspace("gt_io_dup_label");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void io_status_reports_powered_input_fixture_state(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(26, 7, 26));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), WorkspaceRules.API_OWNER, "gt_io_status_fixture", controllerPos, bounds);
+        WorkspaceManager.get(level).addWorkspace(ws);
+        BlockPos leverPos = ws.toWorldPos(0, 0, 0);
+        level.setBlock(leverPos, Blocks.LEVER.defaultBlockState(), 3);
+        ws.addIOMarker(new IOMarker(leverPos, IOMarker.IORole.INPUT, "A"));
+
+        try {
+            JsonObject drive = new JsonObject();
+            drive.addProperty("workspace", ws.getName());
+            drive.addProperty("label", "A");
+            drive.addProperty("power", 15);
+            new IOHandler().drive(new JsonRpcRequest("1", "drive", drive), level.getServer());
+
+            JsonObject statusParams = new JsonObject();
+            statusParams.addProperty("workspace", ws.getName());
+            JsonObject status = new IOHandler().status(new JsonRpcRequest("2", "status", statusParams), level.getServer())
+                    .getAsJsonObject();
+            helper.assertTrue(status.get("A").getAsInt() == 15, "status reflects powered lever state");
+        } catch (JsonRpcException e) {
+            helper.fail("IO status should succeed: " + e.getMessage());
+        } finally {
+            WorkspaceManager.get(level).removeWorkspace("gt_io_status_fixture");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void dangerous_vanilla_entity_commands_are_blocked(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(27, 7, 27));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), new UUID(0, 0), "gt_entity_cmd_block", controllerPos, bounds);
+        ws.setAllowVanillaCommands(false);
+        ws.setAllowFrozenEntityTeleport(false);
+        WorkspaceManager.get(level).addWorkspace(ws);
+
+        ArmorStand stand = new ArmorStand(level, bounds.minX() + 1.5, bounds.minY() + 1.0, bounds.minZ() + 1.5);
+        level.addFreshEntity(stand);
+
+        try {
+            int summonResult = level.getServer().getCommands().performPrefixedCommand(
+                    level.getServer().createCommandSourceStack(),
+                    "summon minecraft:armor_stand " + (bounds.minX() + 2) + " " + (bounds.minY() + 1) + " " + (bounds.minZ() + 2)
+            );
+            helper.assertTrue(summonResult == 0, "summon should be rejected inside protected workspace");
+            helper.assertTrue(level.getEntitiesOfClass(ArmorStand.class, new net.minecraft.world.phys.AABB(
+                    bounds.minX(), bounds.minY(), bounds.minZ(), bounds.maxX() + 1.0, bounds.maxY() + 1.0, bounds.maxZ() + 1.0
+            )).size() == 1, "summon should not create a second armor stand");
+
+            int edgeSummonResult = level.getServer().getCommands().performPrefixedCommand(
+                    level.getServer().createCommandSourceStack(),
+                    "summon minecraft:iron_golem " + (bounds.maxX() + 0.2D) + " " + bounds.minY() + " " + (bounds.minZ() + 1.5D)
+            );
+            helper.assertTrue(edgeSummonResult == 0, "summon should be rejected when entity AABB would overlap protected workspace");
+            helper.assertTrue(level.getEntitiesOfClass(net.minecraft.world.entity.animal.IronGolem.class, new net.minecraft.world.phys.AABB(
+                    bounds.minX() - 2.0, bounds.minY(), bounds.minZ() - 2.0, bounds.maxX() + 3.0, bounds.maxY() + 4.0, bounds.maxZ() + 3.0
+            )).isEmpty(), "no iron golem should be created by overlapping summon");
+
+            int killResult = level.getServer().getCommands().performPrefixedCommand(
+                    level.getServer().createCommandSourceStack(),
+                    "kill @e[type=minecraft:armor_stand,limit=1,sort=nearest,x=" + (bounds.minX() + 1) + ",y=" + (bounds.minY() + 1) + ",z=" + (bounds.minZ() + 1) + ",distance=..2]"
+            );
+            helper.assertTrue(killResult == 0, "kill should be rejected for protected workspace entities");
+            helper.assertTrue(stand.isAlive(), "existing entity remains alive");
+
+            int dataResult = level.getServer().getCommands().performPrefixedCommand(
+                    level.getServer().createCommandSourceStack(),
+                    "data merge entity @e[type=minecraft:armor_stand,limit=1,sort=nearest,x=" + (bounds.minX() + 1) + ",y=" + (bounds.minY() + 1) + ",z=" + (bounds.minZ() + 1) + ",distance=..2] {NoGravity:1b}"
+            );
+            helper.assertTrue(dataResult == 0, "data merge should be rejected for protected workspace entities");
+            helper.assertTrue(!stand.isNoGravity(), "entity NBT remains unchanged");
+
+            double beforeX = stand.getX();
+            double beforeY = stand.getY();
+            double beforeZ = stand.getZ();
+            int tpResult = level.getServer().getCommands().performPrefixedCommand(
+                    level.getServer().createCommandSourceStack(),
+                    "tp @e[type=minecraft:armor_stand,limit=1,sort=nearest,x=" + (bounds.minX() + 1) + ",y=" + (bounds.minY() + 1) + ",z=" + (bounds.minZ() + 1) + ",distance=..2] "
+                            + (beforeX + 2.0D) + " " + beforeY + " " + (beforeZ + 2.0D)
+            );
+            helper.assertTrue(tpResult == 0 || (Math.abs(stand.getX() - beforeX) < 0.01D && Math.abs(stand.getZ() - beforeZ) < 0.01D),
+                    "tp should not move protected workspace entities");
+            helper.assertTrue(Math.abs(stand.getX() - beforeX) < 0.01D, "entity x unchanged after tp");
+            helper.assertTrue(Math.abs(stand.getY() - beforeY) < 0.01D, "entity y unchanged after tp");
+            helper.assertTrue(Math.abs(stand.getZ() - beforeZ) < 0.01D, "entity z unchanged after tp");
+
+            ArmorStand outsider = new ArmorStand(level, bounds.maxX() + 4.5D, bounds.minY() + 1.0D, bounds.minZ() + 1.5D);
+            level.addFreshEntity(outsider);
+            double outsiderBeforeX = outsider.getX();
+            double outsiderBeforeY = outsider.getY();
+            double outsiderBeforeZ = outsider.getZ();
+            int tpIntoWorkspaceResult = level.getServer().getCommands().performPrefixedCommand(
+                    level.getServer().createCommandSourceStack(),
+                    "tp @e[type=minecraft:armor_stand,limit=1,sort=nearest,x=" + outsiderBeforeX + ",y=" + outsiderBeforeY + ",z=" + outsiderBeforeZ + ",distance=..1] "
+                            + (bounds.minX() + 1.5D) + " " + outsiderBeforeY + " " + (bounds.minZ() + 1.5D)
+            );
+            helper.assertTrue(tpIntoWorkspaceResult == 0 || Math.abs(outsider.getX() - outsiderBeforeX) < 0.01D,
+                    "tp should not move external entities into protected workspaces");
+            helper.assertTrue(Math.abs(outsider.getX() - outsiderBeforeX) < 0.01D, "outsider x unchanged after blocked tp");
+            helper.assertTrue(Math.abs(outsider.getZ() - outsiderBeforeZ) < 0.01D, "outsider z unchanged after blocked tp");
+            outsider.discard();
+
+            TickController.freeze(level, ws);
+        } finally {
+            if (ws.isFrozen()) {
+                TickController.discardFrozenState(level, ws);
+            }
+            stand.discard();
+            WorkspaceManager.get(level).removeWorkspace("gt_entity_cmd_block");
+        }
+        helper.succeed();
+    }
+
+    @GameTest(template = T, batch = "workspace", timeoutTicks = 100)
+    public static void dangerous_vanilla_clone_command_is_blocked(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos controllerPos = helper.absolutePos(new BlockPos(28, 7, 28));
+        BoundingBox bounds = WorkspaceRules.createBoundsFromController(controllerPos, 5, 4, 5);
+        Workspace ws = new Workspace(UUID.randomUUID(), new UUID(0, 0), "gt_clone_cmd_block", controllerPos, bounds);
+        ws.setAllowVanillaCommands(false);
+        WorkspaceManager.get(level).addWorkspace(ws);
+
+        BlockPos sourcePos = new BlockPos(bounds.maxX() + 3, bounds.minY(), bounds.minZ());
+        level.setBlock(sourcePos, Blocks.STONE.defaultBlockState(), 3);
+        BlockPos destPos = new BlockPos(bounds.minX() + 1, bounds.minY(), bounds.minZ() + 1);
+
+        try {
+            int cloneResult = level.getServer().getCommands().performPrefixedCommand(
+                    level.getServer().createCommandSourceStack(),
+                    "clone "
+                            + sourcePos.getX() + " " + sourcePos.getY() + " " + sourcePos.getZ() + " "
+                            + sourcePos.getX() + " " + sourcePos.getY() + " " + sourcePos.getZ() + " "
+                            + destPos.getX() + " " + destPos.getY() + " " + destPos.getZ()
+            );
+            helper.assertTrue(cloneResult == 0, "clone should be rejected when destination overlaps protected workspace");
+            helper.assertTrue(level.getBlockState(destPos).isAir(), "clone destination remains unchanged");
+        } finally {
+            level.setBlock(sourcePos, Blocks.AIR.defaultBlockState(), 3);
+            WorkspaceManager.get(level).removeWorkspace("gt_clone_cmd_block");
         }
         helper.succeed();
     }

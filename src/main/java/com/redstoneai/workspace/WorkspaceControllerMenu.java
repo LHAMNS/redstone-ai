@@ -43,6 +43,8 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
     private boolean frozen;
     private int virtualTick;
     private int recordingLength;
+    private String temporalState;
+    private String lastMutationSource;
     private String protectionMode;
     private String entityFilterMode;
     private String authorizedPlayers;
@@ -80,6 +82,8 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
         this.frozen = false;
         this.virtualTick = 0;
         this.recordingLength = 0;
+        this.temporalState = WorkspaceTemporalState.LIVE.getSerializedName();
+        this.lastMutationSource = WorkspaceMutationSource.NONE.getSerializedName();
         this.protectionMode = ProtectionMode.AI_ONLY.getSerializedName();
         this.entityFilterMode = EntityFilterMode.ALL_NON_PLAYER.getSerializedName();
         this.authorizedPlayers = "";
@@ -129,6 +133,8 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
         this.frozen = buf.readBoolean();
         this.virtualTick = buf.readInt();
         this.recordingLength = buf.readInt();
+        this.temporalState = buf.readUtf(64);
+        this.lastMutationSource = buf.readUtf(64);
         this.protectionMode = buf.readUtf(64);
         this.entityFilterMode = buf.readUtf(64);
         this.authorizedPlayers = buf.readUtf(512);
@@ -191,6 +197,8 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
         buf.writeBoolean(frozen);
         buf.writeInt(virtualTick);
         buf.writeInt(recordingLength);
+        buf.writeUtf(temporalState, 64);
+        buf.writeUtf(lastMutationSource, 64);
         buf.writeUtf(protectionMode, 64);
         buf.writeUtf(entityFilterMode, 64);
         buf.writeUtf(authorizedPlayers, 512);
@@ -250,6 +258,8 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
         this.frozen = packet.frozen();
         this.virtualTick = packet.virtualTick();
         this.recordingLength = packet.recordingLength();
+        this.temporalState = packet.temporalState();
+        this.lastMutationSource = packet.lastMutationSource();
         this.protectionMode = packet.protectionMode();
         this.entityFilterMode = packet.entityFilterMode();
         this.authorizedPlayers = packet.authorizedPlayers();
@@ -322,6 +332,8 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
             this.frozen = workspace.isFrozen();
             this.virtualTick = workspace.getVirtualTick();
             this.recordingLength = workspace.getTimeline() != null ? workspace.getTimeline().getLength() : 0;
+            this.temporalState = workspace.getTemporalState().getSerializedName();
+            this.lastMutationSource = workspace.getLastMutationSource().getSerializedName();
             this.protectionMode = workspace.getProtectionMode().getSerializedName();
             this.entityFilterMode = workspace.getEntityFilterMode().getSerializedName();
             this.authorizedPlayers = WorkspaceAccessControl.formatAuthorizedPlayers(workspace.getAuthorizedPlayers());
@@ -346,6 +358,8 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
             this.frozen = false;
             this.virtualTick = 0;
             this.recordingLength = 0;
+            this.temporalState = WorkspaceTemporalState.LIVE.getSerializedName();
+            this.lastMutationSource = WorkspaceMutationSource.NONE.getSerializedName();
             this.canViewHistory = false;
             if (this.workspaceName.isEmpty() && controller.getInitialSnapshot() != null) {
                 setWorkspaceBounds(controller.getInitialSnapshot().getBounds());
@@ -366,6 +380,8 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
         this.frozen = false;
         this.virtualTick = 0;
         this.recordingLength = 0;
+        this.temporalState = WorkspaceTemporalState.LIVE.getSerializedName();
+        this.lastMutationSource = WorkspaceMutationSource.NONE.getSerializedName();
         this.protectionMode = ProtectionMode.AI_ONLY.getSerializedName();
         this.entityFilterMode = EntityFilterMode.ALL_NON_PLAYER.getSerializedName();
         this.authorizedPlayers = "";
@@ -411,6 +427,8 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
                 frozen,
                 virtualTick,
                 recordingLength,
+                temporalState,
+                lastMutationSource,
                 protectionMode,
                 entityFilterMode,
                 authorizedPlayers,
@@ -450,6 +468,8 @@ public class WorkspaceControllerMenu extends AbstractContainerMenu {
     public boolean isFrozen() { return frozen; }
     public int getVirtualTick() { return virtualTick; }
     public int getRecordingLength() { return recordingLength; }
+    public String getTemporalState() { return temporalState; }
+    public String getLastMutationSource() { return lastMutationSource; }
     public String getProtectionMode() { return protectionMode; }
     public String getEntityFilterMode() { return entityFilterMode; }
     public String getAuthorizedPlayers() { return authorizedPlayers; }

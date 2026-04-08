@@ -16,6 +16,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.DoubleTag;
 import net.minecraft.nbt.FloatTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.nbt.TagParser;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
@@ -43,14 +44,18 @@ public class EntityHandler {
         double worldZ = workspace.getOriginPos().getZ() + req.getDoubleParam("z");
         String nbtString = req.getStringParam("nbt", "{}");
         CompoundTag tag = parseCompoundTag(nbtString);
+        sanitizeSpawnTag(tag);
         tag.putString("id", entityTypeId);
         setPosition(tag, worldX, worldY, worldZ);
         applyOptionalRotation(req, tag);
 
         Entity entity = createEntity(level, tag, entityTypeId);
-        ensureEditableEntity(entity, workspace);
-        level.addFreshEntity(entity);
-        TickController.invalidateRecording(level, workspace);
+        ensureEditableEntityTree(entity, workspace);
+        if (!level.addFreshEntity(entity)) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                    "Failed to spawn entity " + entityTypeId + " in the workspace");
+        }
+        TickController.invalidateRecording(level, workspace, com.redstoneai.workspace.WorkspaceMutationSource.ENTITY_MUTATION);
         return toEntityResult(workspace, entity, "spawned");
     }
 
@@ -86,14 +91,14 @@ public class EntityHandler {
         applyOptionalRotation(req, updatedTag);
 
         Entity replacement = createEntity(level, updatedTag, entityTypeId);
-        ensureEditableEntity(replacement, workspace);
+        ensureEditableEntityTree(replacement, workspace);
         WorkspaceBypassContext.runWithEntityRemovalBypass(original::discard);
         if (!level.addFreshEntity(replacement)) {
             restoreOriginalEntity(level, originalTag, entityTypeId);
             throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
                     "Failed to apply entity update for " + original.getUUID());
         }
-        TickController.invalidateRecording(level, workspace);
+        TickController.invalidateRecording(level, workspace, com.redstoneai.workspace.WorkspaceMutationSource.ENTITY_MUTATION);
         return toEntityResult(workspace, replacement, "updated");
     }
 
@@ -105,7 +110,7 @@ public class EntityHandler {
         ServerLevel level = server.overworld();
         Entity entity = requireWorkspaceEntity(level, workspace, req.getStringParam("uuid"));
         WorkspaceBypassContext.runWithEntityRemovalBypass(entity::discard);
-        TickController.invalidateRecording(level, workspace);
+        TickController.invalidateRecording(level, workspace, com.redstoneai.workspace.WorkspaceMutationSource.ENTITY_MUTATION);
 
         JsonObject result = new JsonObject();
         result.addProperty("removed", true);
@@ -133,7 +138,7 @@ public class EntityHandler {
             WorkspaceBypassContext.runWithEntityRemovalBypass(entity::discard);
         }
         if (!toRemove.isEmpty()) {
-            TickController.invalidateRecording(level, workspace);
+            TickController.invalidateRecording(level, workspace, com.redstoneai.workspace.WorkspaceMutationSource.ENTITY_MUTATION);
         }
 
         JsonObject result = new JsonObject();
@@ -205,6 +210,12 @@ public class EntityHandler {
         }
     }
 
+    private void ensureEditableEntityTree(Entity entity, Workspace workspace) throws JsonRpcException {
+        for (Entity current : entity.getSelfAndPassengers().toList()) {
+            ensureEditableEntity(current, workspace);
+        }
+    }
+
     private Entity requireWorkspaceEntity(ServerLevel level, Workspace workspace, String uuidString) throws JsonRpcException {
         UUID uuid;
         try {
@@ -252,6 +263,18 @@ public class EntityHandler {
         pos.add(DoubleTag.valueOf(y));
         pos.add(DoubleTag.valueOf(z));
         tag.put("Pos", pos);
+    }
+
+    private void sanitizeSpawnTag(CompoundTag tag) {
+        tag.remove("UUID");
+        tag.remove("UUIDMost");
+        tag.remove("UUIDLeast");
+        if (tag.contains("Passengers", Tag.TAG_LIST)) {
+            ListTag passengers = tag.getList("Passengers", Tag.TAG_COMPOUND);
+            for (int i = 0; i < passengers.size(); i++) {
+                sanitizeSpawnTag(passengers.getCompound(i));
+            }
+        }
     }
 
     private boolean hasAnyPositionOverride(JsonRpcRequest req) {

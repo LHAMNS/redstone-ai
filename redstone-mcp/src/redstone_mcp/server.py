@@ -753,6 +753,7 @@ async def time(
     - rewind: Go back N ticks (count parameter)
     - fast_forward: Go forward N ticks or replay stored ticks (count parameter)
     - settle: Advance until the circuit is quiet for quiet_ticks consecutive ticks, up to count ticks
+    - discard_future: When rewound, discard future deltas so step becomes available
     """
     try:
         _require_workspace_name(workspace)
@@ -782,8 +783,10 @@ async def time(
             params["count"] = count
             params["quietTicks"] = quiet_ticks
             result = await _call("sim.settle", params)
+        case "discard_future":
+            result = await _call("sim.discard_future", params)
         case _:
-            return f"Unknown action: {action}. Use: freeze, unfreeze, step, rewind, fast_forward, settle"
+            return f"Unknown action: {action}. Use: freeze, unfreeze, step, rewind, fast_forward, settle, discard_future"
     return json.dumps(result, indent=2)
 
 

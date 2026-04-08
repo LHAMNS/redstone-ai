@@ -24,7 +24,7 @@ public abstract class CommandProtectionCloneMixin {
                                               @Coerce Object mode,
                                               CallbackInfoReturnable<Integer> cir) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         net.minecraft.world.level.levelgen.structure.BoundingBox sourceBox = toBox(begin, end);
-        net.minecraft.world.level.levelgen.structure.BoundingBox destinationBox = toBox(destination, end);
+        net.minecraft.world.level.levelgen.structure.BoundingBox destinationBox = translateBox(begin, end, destination);
         if (sourceBox != null) {
             WorkspaceCommandProtection.checkBlockMutation(source, sourceBox);
         }
@@ -42,6 +42,26 @@ public abstract class CommandProtectionCloneMixin {
             net.minecraft.core.BlockPos startPos = (net.minecraft.core.BlockPos) startPosition.invoke(start);
             net.minecraft.core.BlockPos endPos = (net.minecraft.core.BlockPos) endPosition.invoke(end);
             return net.minecraft.world.level.levelgen.structure.BoundingBox.fromCorners(startPos, endPos);
+        } catch (ReflectiveOperationException ignored) {
+            return null;
+        }
+    }
+
+    private static net.minecraft.world.level.levelgen.structure.BoundingBox translateBox(Object sourceStart, Object sourceEnd, Object destinationStart) {
+        try {
+            Method position = sourceStart.getClass().getDeclaredMethod("position");
+            position.setAccessible(true);
+            Method endPosition = sourceEnd.getClass().getDeclaredMethod("position");
+            endPosition.setAccessible(true);
+            Method destinationPosition = destinationStart.getClass().getDeclaredMethod("position");
+            destinationPosition.setAccessible(true);
+
+            net.minecraft.core.BlockPos sourceStartPos = (net.minecraft.core.BlockPos) position.invoke(sourceStart);
+            net.minecraft.core.BlockPos sourceEndPos = (net.minecraft.core.BlockPos) endPosition.invoke(sourceEnd);
+            net.minecraft.core.BlockPos destinationStartPos = (net.minecraft.core.BlockPos) destinationPosition.invoke(destinationStart);
+            net.minecraft.core.BlockPos delta = sourceEndPos.subtract(sourceStartPos);
+            net.minecraft.core.BlockPos destinationEndPos = destinationStartPos.offset(delta);
+            return net.minecraft.world.level.levelgen.structure.BoundingBox.fromCorners(destinationStartPos, destinationEndPos);
         } catch (ReflectiveOperationException ignored) {
             return null;
         }

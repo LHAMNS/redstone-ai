@@ -31,6 +31,9 @@ import java.util.*;
  * <b>Example:</b> {@code @origin 0,1,0 # # # @row D Rn2 D @row # Ces #}
  */
 public final class MCRParser {
+    private static final Set<Character> FACING_CODES = Set.of('R', 'C', 'W', 'P', 'K', 'O', 'H', 'L', 'B', 'I', 'J');
+    private static final Set<Character> DELAY_CODES = Set.of('R');
+    private static final Set<Character> MODE_CODES = Set.of('C');
 
     private static final Map<Character, String> BLOCK_CODES = Map.ofEntries(
             Map.entry('D', "redstone_wire"),
@@ -103,6 +106,7 @@ public final class MCRParser {
                         if (i + 1 >= tokens.length) throw new MCRParseException("@fill requires a block code argument");
                         String fillToken = tokens[++i];
                         if (fillToken.isEmpty()) throw new MCRParseException("@fill requires a non-empty block code");
+                        if (fillToken.length() != 1) throw new MCRParseException("@fill does not support modifiers: '" + fillToken + "'");
                         char fillCode = fillToken.charAt(0);
                         String fillType = BLOCK_CODES.get(fillCode);
                         if (fillType == null) throw new MCRParseException("Unknown block code: '" + fillCode + "' in @fill");
@@ -143,6 +147,16 @@ public final class MCRParser {
                     case 'x' -> mode = "subtract";
                     default -> throw new MCRParseException("Unknown modifier '" + mod + "' in token '" + token + "'");
                 }
+            }
+
+            if (facing != null && !FACING_CODES.contains(code)) {
+                throw new MCRParseException("Block code '" + code + "' does not support facing modifiers");
+            }
+            if (delay > 0 && !DELAY_CODES.contains(code)) {
+                throw new MCRParseException("Block code '" + code + "' does not support delay modifiers");
+            }
+            if (mode != null && !MODE_CODES.contains(code)) {
+                throw new MCRParseException("Block code '" + code + "' does not support mode modifiers");
             }
 
             blocks.add(new MCRBlock(blockType, cx, cy, cz, facing, delay, mode, Map.of()));

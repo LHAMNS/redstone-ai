@@ -69,7 +69,7 @@ public class WorkspaceHandler {
             controller.setSize(sizeX, sizeY, sizeZ);
             controller.setInitialSnapshot(InitialSnapshot.capture(level, bounds));
             controller.getOperationLog().logSystem("create", "RPC workspace '" + name + "' created");
-            applyControllerSettings(workspace, controller);
+            WorkspaceRevertService.applyControllerSettings(workspace, controller);
         }
 
         JsonObject result = new JsonObject();
@@ -329,36 +329,11 @@ public class WorkspaceHandler {
             throw new JsonRpcException(JsonRpcException.INVALID_PARAMS, "Workspace has no initial snapshot to restore");
         }
 
-        boolean wasFrozen = workspace.isFrozen();
-        BoundingBox previousBounds = workspace.getBounds();
-        BlockPos previousOrigin = workspace.getOriginPos();
-        int changed = snapshot.restore(level);
-        BlockPos restoredControllerPos = snapshot.getControllerPos() != null ? snapshot.getControllerPos() : workspace.getControllerPos();
-        WorkspaceControllerBlockEntity restoredController = level.getBlockEntity(restoredControllerPos) instanceof WorkspaceControllerBlockEntity be
-                ? be
-                : controller;
+        WorkspaceRevertService.Result revertResult = WorkspaceRevertService.revert(level, workspace, controller, snapshot);
+        revertResult.restoredController().getOperationLog().logSystem("revert", "RPC reverted " + revertResult.changedBlocks() + " blocks to initial state");
 
-        if (wasFrozen) {
-            TickController.discardFrozenState(level, workspace, previousBounds, previousOrigin);
-        } else {
-            TickController.removeQueue(workspace.getId());
-        }
-
-        WorkspaceManager manager = WorkspaceManager.get(level);
-        manager.updateWorkspaceGeometry(
-                workspace,
-                snapshot.getBounds(),
-                restoredControllerPos,
-                WorkspaceRules.originFromBounds(snapshot.getBounds())
-        );
-        workspace.setTimeline(null);
-        workspace.setVirtualTick(0);
-        restoredController.setInitialSnapshot(snapshot);
-        applyControllerSettings(workspace, restoredController);
-        restoredController.getOperationLog().logSystem("revert", "RPC reverted " + changed + " blocks to initial state");
-
-        JsonObject result = buildWorkspaceInfo(workspace, restoredController);
-        result.addProperty("restoredBlocks", changed);
+        JsonObject result = buildWorkspaceInfo(workspace, revertResult.restoredController());
+        result.addProperty("restoredBlocks", revertResult.changedBlocks());
         return result;
     }
 
@@ -587,6 +562,8 @@ public class WorkspaceHandler {
         result.addProperty("allowFrozenEntityTeleport", workspace.isAllowFrozenEntityTeleport());
         result.addProperty("allowFrozenEntityDamage", workspace.isAllowFrozenEntityDamage());
         result.addProperty("allowFrozenEntityCollision", workspace.isAllowFrozenEntityCollision());
+        result.addProperty("temporalState", workspace.getTemporalState().getSerializedName());
+        result.addProperty("lastMutationSource", workspace.getLastMutationSource().getSerializedName());
         result.add("permissionGrants", buildPermissionGrantsJson(workspace.getPlayerPermissionGrants()));
         result.addProperty("virtualTick", workspace.getVirtualTick());
         result.addProperty("ioMarkers", workspace.getIOMarkers().size());
@@ -664,17 +641,6 @@ public class WorkspaceHandler {
                     "Workspace controller is missing for RPC " + operation);
         }
         return controller;
-    }
-
-    private static void applyControllerSettings(Workspace workspace, WorkspaceControllerBlockEntity controller) {
-        workspace.setProtectionMode(controller.getProtectionMode());
-        workspace.setEntityFilterMode(controller.getEntityFilterMode());
-        workspace.replaceAuthorizedPlayers(controller.getAuthorizedPlayers());
-        workspace.replacePlayerPermissionGrants(controller.getPlayerPermissionGrants());
-        workspace.setAllowVanillaCommands(controller.isAllowVanillaCommands());
-        workspace.setAllowFrozenEntityTeleport(controller.isAllowFrozenEntityTeleport());
-        workspace.setAllowFrozenEntityDamage(controller.isAllowFrozenEntityDamage());
-        workspace.setAllowFrozenEntityCollision(controller.isAllowFrozenEntityCollision());
     }
 
     @Nullable

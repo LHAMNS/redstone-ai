@@ -10,7 +10,8 @@ public enum WorkspacePermission {
     TIME_CONTROL("time"),
     VIEW_HISTORY("history"),
     CHAT("chat"),
-    MANAGE_SETTINGS("settings");
+    MANAGE_SETTINGS("settings"),
+    REVERT("revert");
 
     private final String serializedName;
 

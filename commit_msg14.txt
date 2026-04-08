@@ -1,0 +1,16 @@
+Temporal state machine refactor: TemporalState enum, discardFuture, delete replayThenStep
+
+Major refactor implementing explicit 5-state temporal state machine:
+- WorkspaceTemporalState: LIVE, FROZEN_AT_HEAD, FROZEN_REWOUND, FROZEN_DIRTY, FROZEN_CORRUPTED
+  with query methods (canStep/canRewind/canFastForward/canSettle/canBuild/canUnfreeze)
+- WorkspaceMutationSource: tracks last mutation type for diagnostics
+- TickController: delete replayThenStep (mixed ff+step semantics),
+  add discardFuture (FROZEN_REWOUND -> FROZEN_DIRTY)
+- SimulationHandler: new discardFuture RPC method
+- JsonRpcDispatcher: register sim.discard_future
+- Python server.py: time tool gains discard_future action
+- New command protection mixins: DataCommands, Summon
+- New JUnit test: RecordingSummarizerTest
+- WorkspaceRevertService: shared revert implementation
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>

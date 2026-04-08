@@ -56,7 +56,7 @@ public class BlockEntityHandler {
         BlockState state = level.getBlockState(worldPos);
         level.sendBlockUpdated(worldPos, state, state, 3);
         level.updateNeighbourForOutputSignal(worldPos, state.getBlock());
-        TickController.invalidateRecording(level, workspace);
+        TickController.invalidateRecording(level, workspace, com.redstoneai.workspace.WorkspaceMutationSource.BLOCK_ENTITY_MUTATION);
 
         JsonObject result = new JsonObject();
         result.addProperty("updated", true);

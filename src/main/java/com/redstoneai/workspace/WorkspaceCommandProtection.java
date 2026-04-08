@@ -39,6 +39,10 @@ public final class WorkspaceCommandProtection {
     }
 
     public static void checkEntityMutation(Entity entity) throws CommandSyntaxException {
+        Workspace workspace = WorkspaceAccessControl.findWorkspaceForEntity(entity);
+        if (workspace != null && !workspace.isAllowVanillaCommands()) {
+            throw BLOCKED_COMMAND.create();
+        }
         if (WorkspaceAccessControl.isFrozenEntityTeleportBlocked(entity) || WorkspaceAccessControl.isFrozenEntityDamageBlocked(entity)) {
             throw BLOCKED_ENTITY_COMMAND.create();
         }

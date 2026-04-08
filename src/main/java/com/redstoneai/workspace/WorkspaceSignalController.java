@@ -42,7 +42,7 @@ public final class WorkspaceSignalController {
             changed |= change.apply(level);
         }
         if (changed) {
-            TickController.invalidateRecording(level, workspace);
+            TickController.invalidateRecording(level, workspace, WorkspaceMutationSource.IO_DRIVE);
         }
     }
 
@@ -59,7 +59,7 @@ public final class WorkspaceSignalController {
             changed |= change.apply(level);
         }
         if (changed) {
-            TickController.invalidateRecording(level, workspace);
+            TickController.invalidateRecording(level, workspace, WorkspaceMutationSource.IO_DRIVE);
         }
     }
 
@@ -70,10 +70,21 @@ public final class WorkspaceSignalController {
                 continue;
             }
             if (role == null || marker.role() == role) {
-                result.put(marker.label(), level.getBestNeighborSignal(marker.pos()));
+                result.put(marker.label(), readMarkerSignalLevel(level, marker));
             }
         }
         return result;
+    }
+
+    public static int readMarkerSignalLevel(ServerLevel level, IOMarker marker) {
+        BlockState state = level.getBlockState(marker.pos());
+        if (state.hasProperty(BlockStateProperties.POWER)) {
+            return state.getValue(BlockStateProperties.POWER);
+        }
+        if (state.hasProperty(BlockStateProperties.POWERED)) {
+            return state.getValue(BlockStateProperties.POWERED) ? 15 : 0;
+        }
+        return level.getBestNeighborSignal(marker.pos());
     }
 
     @Nullable

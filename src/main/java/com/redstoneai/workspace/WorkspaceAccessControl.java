@@ -122,6 +122,10 @@ public final class WorkspaceAccessControl {
         return hasPermission(player, workspace, WorkspacePermission.TIME_CONTROL);
     }
 
+    public static boolean canPlayerRevert(ServerPlayer player, Workspace workspace) {
+        return hasPermission(player, workspace, WorkspacePermission.REVERT);
+    }
+
     public static boolean canPlayerManageSettings(ServerPlayer player, Workspace workspace) {
         return hasPermission(player, workspace, WorkspacePermission.MANAGE_SETTINGS);
     }
@@ -129,6 +133,7 @@ public final class WorkspaceAccessControl {
     public static boolean canPlayerOpenMenu(ServerPlayer player, Workspace workspace) {
         return canPlayerModify(player, workspace)
                 || canPlayerUseTimeControls(player, workspace)
+                || canPlayerRevert(player, workspace)
                 || canPlayerViewHistory(player, workspace)
                 || canPlayerChat(player, workspace)
                 || canPlayerManageSettings(player, workspace);
@@ -154,6 +159,24 @@ public final class WorkspaceAccessControl {
                 return workspace;
             }
             if (!workspace.isAllowVanillaCommands() && area.isInside(workspace.getControllerPos())) {
+                return workspace;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    public static Workspace findWorkspaceForCommandMutation(ServerLevel level, AABBLike area) {
+        for (Workspace workspace : WorkspaceManager.get(level).getAllWorkspacesSnapshot()) {
+            if (workspace.isAllowVanillaCommands()) {
+                continue;
+            }
+            if (area.maxX() > workspace.getBounds().minX()
+                    && area.minX() < workspace.getBounds().maxX() + 1.0
+                    && area.maxY() > workspace.getBounds().minY()
+                    && area.minY() < workspace.getBounds().maxY() + 1.0
+                    && area.maxZ() > workspace.getBounds().minZ()
+                    && area.minZ() < workspace.getBounds().maxZ() + 1.0) {
                 return workspace;
             }
         }

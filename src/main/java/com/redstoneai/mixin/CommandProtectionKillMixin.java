@@ -16,7 +16,9 @@ public abstract class CommandProtectionKillMixin {
     @Inject(method = "kill", at = @At("HEAD"), cancellable = true)
     private static void redstoneai$blockKill(CommandSourceStack source, Collection<? extends Entity> entities, CallbackInfoReturnable<Integer> cir) {
         for (Entity entity : entities) {
-            if (WorkspaceAccessControl.isFrozenEntityDamageBlocked(entity)) {
+            var workspace = WorkspaceAccessControl.findWorkspaceForEntity(entity);
+            if ((workspace != null && !workspace.isAllowVanillaCommands())
+                    || WorkspaceAccessControl.isFrozenEntityDamageBlocked(entity)) {
                 cir.setReturnValue(0);
                 return;
             }

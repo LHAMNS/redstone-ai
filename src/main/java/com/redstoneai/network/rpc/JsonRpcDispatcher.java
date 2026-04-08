@@ -24,6 +24,18 @@ public class JsonRpcDispatcher {
     }
 
     private void registerDefaults() {
+        register("server.info", (req, srv) -> {
+            com.google.gson.JsonObject result = new com.google.gson.JsonObject();
+            result.addProperty("status", "ok");
+            result.addProperty("version", "0.1.0");
+            result.addProperty("maxWorkspaceSize", com.redstoneai.config.RAIConfig.SERVER.maxWorkspaceSize.get());
+            result.addProperty("maxStepsPerCall", com.redstoneai.config.RAIConfig.SERVER.maxStepsPerCall.get());
+            result.addProperty("maxRecordingTicks", com.redstoneai.config.RAIConfig.SERVER.maxRecordingTicks.get());
+            result.addProperty("webSocketPort", com.redstoneai.config.RAIConfig.SERVER.webSocketPort.get());
+            result.addProperty("webSocketBindAddress", com.redstoneai.config.RAIConfig.SERVER.webSocketBindAddress.get());
+            return result;
+        });
+
         WorkspaceHandler wsHandler = new WorkspaceHandler();
         register("workspace.create", wsHandler::create);
         register("workspace.delete", wsHandler::delete);
@@ -47,6 +59,7 @@ public class JsonRpcDispatcher {
         register("sim.step", simHandler::step);
         register("sim.rewind", simHandler::rewind);
         register("sim.ff", simHandler::fastForward);
+        register("sim.discard_future", simHandler::discardFuture);
         register("sim.settle", simHandler::settle);
         register("sim.summary", simHandler::summary);
         register("sim.timing", simHandler::timing);
@@ -74,10 +87,7 @@ public class JsonRpcDispatcher {
         register("test.define", testHandler::define);
 
         register("status", (req, srv) -> {
-            com.google.gson.JsonObject result = new com.google.gson.JsonObject();
-            result.addProperty("status", "ok");
-            result.addProperty("version", "0.1.0");
-            return result;
+            return handlers.get("server.info").handle(req, srv);
         });
 
         register("help.mcr", (req, srv) -> {

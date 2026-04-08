@@ -2,6 +2,7 @@ package com.redstoneai.recording;
 
 import com.redstoneai.tick.FrozenTickQueue;
 import com.redstoneai.workspace.Workspace;
+import com.redstoneai.workspace.WorkspaceSignalController;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
@@ -31,6 +32,15 @@ public final class StateRecorder {
         pendingChanges.put(ws.getId(), new LinkedHashMap<>());
         preStepBlockEntities.put(ws.getId(), captureBlockEntities(level, ws));
         preStepEntityStates.put(ws.getId(), captureEntityStates(level, ws));
+    }
+
+    public static void abortStep(Workspace ws) {
+        pendingChanges.remove(ws.getId());
+        preStepBlockEntities.remove(ws.getId());
+        preStepEntityStates.remove(ws.getId());
+        if (currentStepWorkspace != null && currentStepWorkspace.getId().equals(ws.getId())) {
+            currentStepWorkspace = null;
+        }
     }
 
     /**
@@ -96,7 +106,7 @@ public final class StateRecorder {
 
         Map<BlockPos, Integer> ioPowerLevels = new LinkedHashMap<>();
         for (IOMarker marker : ws.getIOMarkers()) {
-            ioPowerLevels.put(marker.pos(), level.getBestNeighborSignal(marker.pos()));
+            ioPowerLevels.put(marker.pos(), WorkspaceSignalController.readMarkerSignalLevel(level, marker));
         }
 
         List<TickSnapshot.EntitySnapshot> afterEntities = captureEntityStates(level, ws);

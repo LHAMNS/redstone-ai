@@ -2,6 +2,7 @@ package com.redstoneai.workspace;
 
 import com.redstoneai.recording.IOMarker;
 import com.redstoneai.recording.RecordingTimeline;
+import com.redstoneai.tick.FrozenTickQueue;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -36,9 +37,13 @@ public class Workspace {
     private boolean allowFrozenEntityDamage;
     private boolean allowFrozenEntityCollision;
     private boolean frozen;
+    private WorkspaceTemporalState temporalState;
+    private WorkspaceMutationSource lastMutationSource;
     private final List<IOMarker> ioMarkers;
     @Nullable
     private RecordingTimeline timeline;
+    @Nullable
+    private FrozenTickQueue.QueueState persistedFrozenQueueState;
     private int virtualTick;
 
     public Workspace(UUID id, UUID ownerUUID, String name, BlockPos controllerPos, BoundingBox bounds) {
@@ -61,8 +66,11 @@ public class Workspace {
         this.allowFrozenEntityDamage = false;
         this.allowFrozenEntityCollision = false;
         this.frozen = false;
+        this.temporalState = WorkspaceTemporalState.LIVE;
+        this.lastMutationSource = WorkspaceMutationSource.NONE;
         this.ioMarkers = new ArrayList<>();
         this.timeline = null;
+        this.persistedFrozenQueueState = null;
         this.virtualTick = 0;
     }
 
@@ -83,11 +91,15 @@ public class Workspace {
     public boolean isAllowFrozenEntityDamage() { return allowFrozenEntityDamage; }
     public boolean isAllowFrozenEntityCollision() { return allowFrozenEntityCollision; }
     public boolean isFrozen() { return frozen; }
+    public WorkspaceTemporalState getTemporalState() { return temporalState; }
+    public WorkspaceMutationSource getLastMutationSource() { return lastMutationSource; }
     public List<IOMarker> getIOMarkers() { return Collections.unmodifiableList(ioMarkers); }
     public int getVirtualTick() { return virtualTick; }
 
     @Nullable
     public RecordingTimeline getTimeline() { return timeline; }
+    @Nullable
+    public FrozenTickQueue.QueueState getPersistedFrozenQueueState() { return persistedFrozenQueueState; }
 
     // --- Mutators ---
 
@@ -101,6 +113,7 @@ public class Workspace {
             setPlayerPermission(playerName, WorkspacePermission.TIME_CONTROL, true);
             setPlayerPermission(playerName, WorkspacePermission.VIEW_HISTORY, true);
             setPlayerPermission(playerName, WorkspacePermission.CHAT, true);
+            setPlayerPermission(playerName, WorkspacePermission.REVERT, true);
         }
     }
     public void setAllowVanillaCommands(boolean allowVanillaCommands) { this.allowVanillaCommands = allowVanillaCommands; }
@@ -115,7 +128,10 @@ public class Workspace {
         }
     }
     public void setFrozen(boolean frozen) { this.frozen = frozen; }
+    public void setTemporalState(WorkspaceTemporalState temporalState) { this.temporalState = temporalState; }
+    public void setLastMutationSource(WorkspaceMutationSource lastMutationSource) { this.lastMutationSource = lastMutationSource; }
     public void setTimeline(@Nullable RecordingTimeline timeline) { this.timeline = timeline; }
+    public void setPersistedFrozenQueueState(@Nullable FrozenTickQueue.QueueState queueState) { this.persistedFrozenQueueState = queueState; }
     public void setControllerPos(BlockPos controllerPos) { this.controllerPos = controllerPos; }
     public void setOriginPos(BlockPos originPos) { this.originPos = originPos; }
     public void incrementVirtualTick() { this.virtualTick++; }
@@ -246,6 +262,18 @@ public class Workspace {
         ioMarkers.add(marker);
     }
 
+    public boolean hasIOMarkerLabel(String label, @Nullable BlockPos ignorePos) {
+        for (IOMarker marker : ioMarkers) {
+            if (ignorePos != null && marker.pos().equals(ignorePos)) {
+                continue;
+            }
+            if (marker.label().equals(label)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public void removeIOMarker(BlockPos pos) {
         ioMarkers.removeIf(m -> m.pos().equals(pos));
     }
@@ -283,7 +311,15 @@ public class Workspace {
         tag.putBoolean("allowFrozenEntityDamage", allowFrozenEntityDamage);
         tag.putBoolean("allowFrozenEntityCollision", allowFrozenEntityCollision);
         tag.putBoolean("frozen", frozen);
+        tag.putString("temporalState", temporalState.getSerializedName());
+        tag.putString("lastMutationSource", lastMutationSource.getSerializedName());
         tag.putInt("virtualTick", virtualTick);
+        if (timeline != null) {
+            tag.put("timeline", timeline.save());
+        }
+        if (persistedFrozenQueueState != null) {
+            tag.put("persistedFrozenQueueState", FrozenTickQueue.saveQueueState(persistedFrozenQueueState));
+        }
 
         ListTag markerList = new ListTag();
         for (IOMarker marker : ioMarkers) {
@@ -337,7 +373,21 @@ public class Workspace {
         ws.allowFrozenEntityDamage = tag.getBoolean("allowFrozenEntityDamage");
         ws.allowFrozenEntityCollision = tag.getBoolean("allowFrozenEntityCollision");
         ws.frozen = tag.getBoolean("frozen");
+        ws.temporalState = WorkspaceTemporalState.tryParse(tag.getString("temporalState"));
+        if (ws.temporalState == null) {
+            ws.temporalState = ws.frozen ? WorkspaceTemporalState.FROZEN_AT_HEAD : WorkspaceTemporalState.LIVE;
+        }
+        ws.lastMutationSource = WorkspaceMutationSource.tryParse(tag.getString("lastMutationSource"));
+        if (ws.lastMutationSource == null) {
+            ws.lastMutationSource = WorkspaceMutationSource.NONE;
+        }
         ws.virtualTick = tag.getInt("virtualTick");
+        if (tag.contains("timeline", Tag.TAG_COMPOUND)) {
+            ws.timeline = RecordingTimeline.load(tag.getCompound("timeline"));
+        }
+        if (tag.contains("persistedFrozenQueueState", Tag.TAG_COMPOUND)) {
+            ws.persistedFrozenQueueState = FrozenTickQueue.loadQueueState(tag.getCompound("persistedFrozenQueueState"));
+        }
 
         ListTag markerList = tag.getList("ioMarkers", Tag.TAG_COMPOUND);
         for (int i = 0; i < markerList.size(); i++) {
@@ -364,6 +414,7 @@ public class Workspace {
                 ws.setPlayerPermission(playerName, WorkspacePermission.TIME_CONTROL, true);
                 ws.setPlayerPermission(playerName, WorkspacePermission.VIEW_HISTORY, true);
                 ws.setPlayerPermission(playerName, WorkspacePermission.CHAT, true);
+                ws.setPlayerPermission(playerName, WorkspacePermission.REVERT, true);
             }
         }
 

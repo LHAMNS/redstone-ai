@@ -12,6 +12,8 @@ import com.redstoneai.workspace.Workspace;
 import com.redstoneai.workspace.WorkspaceBypassContext;
 import com.redstoneai.workspace.WorkspaceChunkLoader;
 import com.redstoneai.workspace.WorkspaceManager;
+import com.redstoneai.workspace.WorkspaceMutationSource;
+import com.redstoneai.workspace.WorkspaceTemporalState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
@@ -44,12 +46,10 @@ public final class TickController {
     private static final Field SERVER_LEVEL_BLOCK_EVENTS_FIELD;
 
     static {
-        // Dev environment uses Mojang-mapped names; production uses SRG names.
-        // Try Mojang name first (dev), fall back to SRG name (production).
-        LEVEL_TICKS_ALL_CONTAINERS_FIELD = findFieldSafe(LevelTicks.class, "allContainers", "f_193800_");
-        LEVEL_TICKS_TO_RUN_FIELD = findFieldSafe(LevelTicks.class, "toRunThisTick", "f_193802_");
-        LEVEL_TICKS_ALREADY_RUN_FIELD = findFieldSafe(LevelTicks.class, "alreadyRunThisTick", "f_193803_");
-        SERVER_LEVEL_BLOCK_EVENTS_FIELD = findFieldSafe(ServerLevel.class, "blockEvents", "f_8549_");
+        LEVEL_TICKS_ALL_CONTAINERS_FIELD = findFieldSafe(LevelTicks.class, "allContainers", "f_193202_");
+        LEVEL_TICKS_TO_RUN_FIELD = findFieldSafe(LevelTicks.class, "toRunThisTick", "f_193205_");
+        LEVEL_TICKS_ALREADY_RUN_FIELD = findFieldSafe(LevelTicks.class, "alreadyRunThisTick", "f_193206_");
+        SERVER_LEVEL_BLOCK_EVENTS_FIELD = findFieldSafe(ServerLevel.class, "blockEvents", "f_8556_");
     }
 
     private static Field findFieldSafe(Class<?> clazz, String mojangName, String srgName) {
@@ -81,6 +81,8 @@ public final class TickController {
         if (!wasFrozen || ws.getTimeline() == null) {
             resetRecording(level, ws);
         }
+        ws.setTemporalState(WorkspaceTemporalState.FROZEN_AT_HEAD);
+        ws.setLastMutationSource(WorkspaceMutationSource.FREEZE);
 
         WorkspaceChunkLoader.forceLoadWorkspace(level, ws);
         WorkspaceManager.get(level).setDirty();
@@ -102,6 +104,8 @@ public final class TickController {
         migratePendingBlockEvents(level, ws, queue);
         resetRecording(level, ws);
         ws.setVirtualTick(0);
+        ws.setTemporalState(WorkspaceTemporalState.FROZEN_AT_HEAD);
+        ws.setLastMutationSource(WorkspaceMutationSource.FREEZE);
         WorkspaceChunkLoader.forceLoadWorkspace(level, ws);
         WorkspaceManager.get(level).setDirty();
         WorkspaceBoundarySyncPacket.sync(level);
@@ -114,6 +118,8 @@ public final class TickController {
         }
 
         ws.setFrozen(false);
+        ws.setPersistedFrozenQueueState(null);
+        ws.setTemporalState(WorkspaceTemporalState.LIVE);
         FrozenTickQueue queue = frozenQueues.remove(ws.getId());
         if (queue != null && !queue.isEmpty()) {
             replayQueueIntoWorld(level, queue);
@@ -137,6 +143,8 @@ public final class TickController {
             return;
         }
         ws.setFrozen(false);
+        ws.setPersistedFrozenQueueState(null);
+        ws.setTemporalState(WorkspaceTemporalState.LIVE);
         frozenQueues.remove(ws.getId());
         WorkspaceChunkLoader.unloadWorkspace(level, unloadBounds, unloadOrigin, ws.getName());
         WorkspaceManager.get(level).setDirty();
@@ -150,7 +158,11 @@ public final class TickController {
                                                  FrozenTickQueue.QueueState queueState) {
         ws.setFrozen(true);
         ws.setTimeline(timeline);
+        ws.setPersistedFrozenQueueState(queueState);
         ws.setVirtualTick(virtualTick);
+        ws.setTemporalState(timeline != null && timeline.getCurrentIndex() < timeline.getLength() - 1
+                ? WorkspaceTemporalState.FROZEN_REWOUND
+                : WorkspaceTemporalState.FROZEN_AT_HEAD);
         FrozenTickQueue queue = frozenQueues.computeIfAbsent(ws.getId(), ignored -> new FrozenTickQueue());
         queue.restore(queueState);
         WorkspaceChunkLoader.forceLoadWorkspace(level, ws);
@@ -160,6 +172,9 @@ public final class TickController {
 
     public static int step(ServerLevel level, Workspace ws, int count) {
         if (!ws.isFrozen()) {
+            return 0;
+        }
+        if (!ws.getTemporalState().canStep()) {
             return 0;
         }
 
@@ -173,6 +188,8 @@ public final class TickController {
         }
 
         WorkspaceManager.get(level).setDirty();
+        ws.setTemporalState(WorkspaceTemporalState.FROZEN_AT_HEAD);
+        ws.setLastMutationSource(WorkspaceMutationSource.STEP);
         return stepped;
     }
 
@@ -187,6 +204,8 @@ public final class TickController {
             applySnapshotBackward(level, ws, snapshot);
         }
         ws.setVirtualTick(Math.max(0, ws.getVirtualTick() - toUndo.size()));
+        ws.setTemporalState(WorkspaceTemporalState.FROZEN_REWOUND);
+        ws.setLastMutationSource(WorkspaceMutationSource.REWIND);
         WorkspaceManager.get(level).setDirty();
         return toUndo.size();
     }
@@ -202,25 +221,32 @@ public final class TickController {
             applySnapshotForward(level, ws, snapshot);
         }
         ws.setVirtualTick(ws.getVirtualTick() + toReplay.size());
+        ws.setTemporalState(timeline.getCurrentIndex() < timeline.getLength() - 1
+                ? WorkspaceTemporalState.FROZEN_REWOUND
+                : WorkspaceTemporalState.FROZEN_AT_HEAD);
+        ws.setLastMutationSource(WorkspaceMutationSource.FAST_FORWARD);
         WorkspaceManager.get(level).setDirty();
         return toReplay.size();
     }
 
-    public static int replayThenStep(ServerLevel level, Workspace ws, int count) {
+    /**
+     * Discard future deltas beyond the current rewind position.
+     * Transitions FROZEN_REWOUND → FROZEN_DIRTY so step() becomes available.
+     */
+    public static void discardFuture(ServerLevel level, Workspace ws) {
+        if (ws.getTemporalState() != WorkspaceTemporalState.FROZEN_REWOUND) {
+            throw new IllegalStateException("discardFuture requires FROZEN_REWOUND state, got " + ws.getTemporalState());
+        }
         RecordingTimeline timeline = ws.getTimeline();
-        int replayed = 0;
-        if (timeline != null) {
-            int availableFuture = Math.max(0, timeline.getLength() - (timeline.getCurrentIndex() + 1));
-            int toReplay = Math.min(count, availableFuture);
-            if (toReplay > 0) {
-                replayed = fastForward(level, ws, toReplay);
-            }
+        if (timeline != null && timeline.getCurrentIndex() < timeline.getLength() - 1) {
+            // Truncate future by adding a no-op — addDelta's truncation logic handles this
+            // Actually just directly truncate:
+            timeline.getDeltas().subList(timeline.getCurrentIndex() + 1, timeline.getLength()).clear();
         }
-        int remaining = count - replayed;
-        if (remaining > 0) {
-            return replayed + step(level, ws, remaining);
-        }
-        return replayed;
+        resetRecording(level, ws);
+        ws.setTemporalState(WorkspaceTemporalState.FROZEN_DIRTY);
+        ws.setLastMutationSource(WorkspaceMutationSource.SYSTEM);
+        WorkspaceManager.get(level).setDirty();
     }
 
     public static void restoreBaseState(ServerLevel level, Workspace ws) {
@@ -254,12 +280,17 @@ public final class TickController {
             queue.restore(timeline.getBaseQueueState());
         }
         ws.setVirtualTick(0);
+        ws.setTemporalState(WorkspaceTemporalState.FROZEN_AT_HEAD);
     }
 
     /**
      * External mutations while frozen/non-stepping invalidate the recording baseline.
      */
     public static void invalidateRecording(ServerLevel level, Workspace ws) {
+        invalidateRecording(level, ws, WorkspaceMutationSource.SYSTEM);
+    }
+
+    public static void invalidateRecording(ServerLevel level, Workspace ws, WorkspaceMutationSource mutationSource) {
         if (ws.isFrozen()) {
             FrozenTickQueue queue = frozenQueues.computeIfAbsent(ws.getId(), ignored -> new FrozenTickQueue());
             migratePendingScheduledTicks(level, ws, queue);
@@ -267,26 +298,45 @@ public final class TickController {
             // Skip the expensive full-workspace snapshot if the timeline is
             // already fresh (no deltas recorded yet) — avoids double-capture
             // when freeze() was just called before an input change.
-            RecordingTimeline timeline = ws.getTimeline();
-            if (timeline == null || timeline.getLength() > 0) {
-                resetRecording(level, ws);
-            }
+            resetRecording(level, ws);
+            ws.setTemporalState(WorkspaceTemporalState.FROZEN_DIRTY);
         } else {
             ws.setTimeline(null);
             ws.setVirtualTick(0);
+            ws.setTemporalState(WorkspaceTemporalState.LIVE);
         }
+        ws.setLastMutationSource(mutationSource);
         WorkspaceManager.get(level).setDirty();
     }
 
     private static void stepOnce(ServerLevel level, Workspace ws, FrozenTickQueue queue) {
         int nextTick = ws.getVirtualTick() + 1;
         FrozenTickQueue.QueueState queueBefore = queue.snapshot();
+        StepRollbackState rollbackState = captureRollbackState(level, ws, queueBefore, ws.getVirtualTick());
         StateRecorder.beginStep(level, ws);
         TickInterceptor.beginStep(ws);
+        boolean contextClosed = false;
 
         try {
             // Order matches vanilla ServerLevel.tick():
             // 1. Block events (pistons, noteblocks) — vanilla runBlockEvents()
+            // 1. Scheduled block ticks
+            for (FrozenTickQueue.QueuedBlockTick tick : queue.pollDueBlockTicks()) {
+                BlockState state = level.getBlockState(tick.pos());
+                if (state.is(tick.block())) {
+                    state.tick(level, tick.pos(), level.random);
+                }
+            }
+
+            // 2. Scheduled fluid ticks
+            for (FrozenTickQueue.QueuedFluidTick tick : queue.pollDueFluidTicks()) {
+                FluidState fluidState = level.getFluidState(tick.pos());
+                if (fluidState.is(tick.fluid())) {
+                    fluidState.tick(level, tick.pos());
+                }
+            }
+
+            // 3. Block events
             for (FrozenTickQueue.QueuedBlockEvent queuedEvent : queue.pollDueBlockEvents()) {
                 var event = queuedEvent.event();
                 BlockState state = level.getBlockState(event.pos());
@@ -295,35 +345,33 @@ public final class TickController {
                 }
             }
 
-            // 2. Entities
+            // 4. Entities
             tickEntitiesInWorkspace(level, ws);
-
-            // 3. Block entities
+            // 5. Block entities
             tickBlockEntitiesInWorkspace(level, ws);
-
-            // 4. Scheduled block ticks (repeaters, comparators, etc.)
-            for (FrozenTickQueue.QueuedBlockTick tick : queue.pollDueBlockTicks()) {
-                BlockState state = level.getBlockState(tick.pos());
-                if (state.is(tick.block())) {
-                    state.tick(level, tick.pos(), level.random);
-                }
-            }
-
-            // 5. Fluid ticks
-            for (FrozenTickQueue.QueuedFluidTick tick : queue.pollDueFluidTicks()) {
-                FluidState fluidState = level.getFluidState(tick.pos());
-                if (fluidState.is(tick.fluid())) {
-                    fluidState.tick(level, tick.pos());
-                }
-            }
 
             for (FrozenTickQueue.QueuedNeighborUpdate update : queue.drainNeighborUpdates()) {
                 update.state().neighborChanged(level, update.pos(), update.sourceBlock(), update.sourcePos(), update.movedByPiston());
             }
-        } finally {
             TickInterceptor.endStep();
+            contextClosed = true;
             StateRecorder.endStep(level, ws, nextTick, queueBefore, queue.snapshot());
             ws.setVirtualTick(nextTick);
+        } catch (RuntimeException | Error e) {
+            if (!contextClosed) {
+                TickInterceptor.endStep();
+                contextClosed = true;
+            }
+            StateRecorder.abortStep(ws);
+            restoreRollbackState(level, ws, queue, rollbackState);
+            ws.setTemporalState(WorkspaceTemporalState.FROZEN_CORRUPTED);
+            ws.setLastMutationSource(WorkspaceMutationSource.SYSTEM);
+            WorkspaceManager.get(level).setDirty();
+            throw new IllegalStateException("Virtual step failed for workspace '" + ws.getName() + "'", e);
+        } finally {
+            if (!contextClosed) {
+                TickInterceptor.endStep();
+            }
         }
     }
 
@@ -372,6 +420,63 @@ public final class TickController {
         List<TickSnapshot.EntitySnapshot> baseEntities = captureWorkspaceEntities(level, ws);
         FrozenTickQueue queue = frozenQueues.computeIfAbsent(ws.getId(), ignored -> new FrozenTickQueue());
         ws.getTimeline().setBaseSnapshot(blocks, tileEntities, baseEntities, queue.snapshot());
+    }
+
+    private static StepRollbackState captureRollbackState(ServerLevel level,
+                                                          Workspace ws,
+                                                          FrozenTickQueue.QueueState queueBefore,
+                                                          int virtualTickBefore) {
+        BoundingBox bounds = ws.getBounds();
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        Map<BlockPos, CompoundTag> tileEntities = new HashMap<>();
+
+        for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
+            for (int y = bounds.minY(); y <= bounds.maxY(); y++) {
+                for (int z = bounds.minZ(); z <= bounds.maxZ(); z++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState state = level.getBlockState(pos);
+                    if (!state.isAir()) {
+                        blocks.put(pos.immutable(), state);
+                    }
+                    BlockEntity blockEntity = level.getBlockEntity(pos);
+                    if (blockEntity != null) {
+                        tileEntities.put(pos.immutable(), blockEntity.saveWithoutMetadata());
+                    }
+                }
+            }
+        }
+
+        return new StepRollbackState(
+                bounds,
+                blocks,
+                tileEntities,
+                captureWorkspaceEntities(level, ws),
+                queueBefore,
+                virtualTickBefore
+        );
+    }
+
+    private static void restoreRollbackState(ServerLevel level,
+                                             Workspace ws,
+                                             FrozenTickQueue queue,
+                                             StepRollbackState rollbackState) {
+        BoundingBox bounds = rollbackState.bounds();
+        for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
+            for (int y = bounds.minY(); y <= bounds.maxY(); y++) {
+                for (int z = bounds.minZ(); z <= bounds.maxZ(); z++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState targetState = rollbackState.blocks().getOrDefault(
+                            pos,
+                            net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()
+                    );
+                    level.setBlock(pos, targetState, 2 | 16);
+                    restoreBlockEntity(level, pos, targetState, rollbackState.tileEntities().get(pos));
+                }
+            }
+        }
+        restoreEntityStates(level, ws, rollbackState.entityStates());
+        queue.restore(rollbackState.queueBefore());
+        ws.setVirtualTick(rollbackState.virtualTickBefore());
     }
 
     private static List<TickSnapshot.EntitySnapshot> captureWorkspaceEntities(ServerLevel level, Workspace ws) {
@@ -517,6 +622,12 @@ public final class TickController {
         frozenQueues.remove(workspaceId);
     }
 
+    @Nullable
+    public static FrozenTickQueue.QueueState snapshotQueueState(Workspace ws) {
+        FrozenTickQueue queue = getQueue(ws);
+        return queue != null ? queue.snapshot() : ws.getPersistedFrozenQueueState();
+    }
+
     private static void migratePendingScheduledTicks(ServerLevel level, Workspace ws, FrozenTickQueue queue) {
         BoundingBox bounds = ws.getBounds();
         ServerLevelTickAccessAccessor accessor = (ServerLevelTickAccessAccessor) level;
@@ -524,9 +635,9 @@ public final class TickController {
         migrateLevelTicks(level, accessor.redstoneai$getFluidTicks(), bounds, queue, false);
     }
 
-    @SuppressWarnings("unchecked")
     private static void migratePendingBlockEvents(ServerLevel level, Workspace ws, FrozenTickQueue queue) {
         try {
+            @SuppressWarnings("unchecked")
             Collection<BlockEventData> blockEvents = (Collection<BlockEventData>) SERVER_LEVEL_BLOCK_EVENTS_FIELD.get(level);
             Iterator<BlockEventData> iterator = blockEvents.iterator();
             while (iterator.hasNext()) {
@@ -563,9 +674,6 @@ public final class TickController {
     private static <T> List<ScheduledTick<T>> collectScheduledTicks(LevelTicks<T> levelTicks, BoundingBox bounds) {
         try {
             List<ScheduledTick<T>> ticks = new ArrayList<>();
-            ((List<ScheduledTick<T>>) LEVEL_TICKS_ALREADY_RUN_FIELD.get(levelTicks)).stream()
-                    .filter(tick -> bounds.isInside(tick.pos()))
-                    .forEach(ticks::add);
             ((Queue<ScheduledTick<T>>) LEVEL_TICKS_TO_RUN_FIELD.get(levelTicks)).stream()
                     .filter(tick -> bounds.isInside(tick.pos()))
                     .forEach(ticks::add);
@@ -594,5 +702,15 @@ public final class TickController {
             }
             collectPassengerIds(passenger, passengerIds);
         }
+    }
+
+    private record StepRollbackState(
+            BoundingBox bounds,
+            Map<BlockPos, BlockState> blocks,
+            Map<BlockPos, CompoundTag> tileEntities,
+            List<TickSnapshot.EntitySnapshot> entityStates,
+            FrozenTickQueue.QueueState queueBefore,
+            int virtualTickBefore
+    ) {
     }
 }

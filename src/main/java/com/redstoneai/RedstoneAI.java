@@ -24,6 +24,7 @@ import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.level.LevelEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.server.ServerStartedEvent;
+import net.minecraftforge.event.server.ServerStoppedEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.DistExecutor;
@@ -58,6 +59,7 @@ public class RedstoneAI {
         forgeBus.addListener(this::onRegisterCommands);
         forgeBus.addListener(this::onPlayerLogin);
         forgeBus.addListener(this::onPlayerChangedDimension);
+        forgeBus.addListener(this::onServerStopped);
 
         DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> RedstoneAIClient::init);
 
@@ -76,8 +78,11 @@ public class RedstoneAI {
 
     private void onServerStopping(ServerStoppingEvent event) {
         WebSocketServer.stop();
-        TickController.clearAllQueues();
         LOGGER.info("[RedstoneAI] Server stopping. Cleaning up workspaces.");
+    }
+
+    private void onServerStopped(ServerStoppedEvent event) {
+        TickController.clearAllQueues();
     }
 
     private void onLevelLoad(LevelEvent.Load event) {
@@ -87,7 +92,22 @@ public class RedstoneAI {
             LevelTickSourceRegistry.register(serverLevel, accessor.redstoneai$getBlockTicks(), accessor.redstoneai$getFluidTicks());
             for (var workspace : manager.getAllWorkspacesSnapshot()) {
                 if (workspace.isFrozen()) {
-                    TickController.initializeLoadedFrozenWorkspace(serverLevel, workspace);
+                    if (workspace.getTimeline() != null || workspace.getPersistedFrozenQueueState() != null) {
+                        var queueState = workspace.getPersistedFrozenQueueState() != null
+                                ? workspace.getPersistedFrozenQueueState()
+                                : workspace.getTimeline() != null
+                                    ? workspace.getTimeline().getCurrentQueueState()
+                                    : new com.redstoneai.tick.FrozenTickQueue.QueueState(java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of());
+                        TickController.restoreFrozenRuntimeState(
+                                serverLevel,
+                                workspace,
+                                workspace.getTimeline(),
+                                workspace.getVirtualTick(),
+                                queueState
+                        );
+                    } else {
+                        TickController.initializeLoadedFrozenWorkspace(serverLevel, workspace);
+                    }
                 }
             }
             LOGGER.debug("[RedstoneAI] WorkspaceManager loaded for {}", serverLevel.dimension().location());

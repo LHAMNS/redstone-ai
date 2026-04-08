@@ -168,7 +168,7 @@ public final class SelectionManager {
         if (workspace != null) {
             Workspace selectedWorkspace = workspace;
             selectedWorkspace.retainIOMarkers(marker -> selectedWorkspace.contains(marker.pos()));
-            TickController.invalidateRecording(level, selectedWorkspace);
+        TickController.invalidateRecording(level, selectedWorkspace, WorkspaceMutationSource.CONFIG);
         }
 
         player.sendSystemMessage(Component.translatable("message.redstone_ai.select_mode_done",

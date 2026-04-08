@@ -2,6 +2,7 @@ package com.redstoneai.workspace;
 
 import com.redstoneai.RedstoneAI;
 import com.redstoneai.network.WorkspaceBoundarySyncPacket;
+import com.redstoneai.tick.TickController;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -244,6 +245,11 @@ public class WorkspaceManager extends SavedData {
     public CompoundTag save(CompoundTag tag) {
         ListTag list = new ListTag();
         for (Workspace ws : workspacesById.values()) {
+            if (ws.isFrozen()) {
+                ws.setPersistedFrozenQueueState(TickController.snapshotQueueState(ws));
+            } else {
+                ws.setPersistedFrozenQueueState(null);
+            }
             list.add(ws.save());
         }
         tag.put("workspaces", list);

@@ -128,6 +128,7 @@ public class WorkspaceControllerBlockEntity extends BlockEntity {
             setPlayerPermission(playerName, WorkspacePermission.TIME_CONTROL, true);
             setPlayerPermission(playerName, WorkspacePermission.VIEW_HISTORY, true);
             setPlayerPermission(playerName, WorkspacePermission.CHAT, true);
+            setPlayerPermission(playerName, WorkspacePermission.REVERT, true);
         }
         setChanged();
     }
@@ -259,6 +260,7 @@ public class WorkspaceControllerBlockEntity extends BlockEntity {
 
     public void copyStateFrom(WorkspaceControllerBlockEntity source) {
         this.workspaceName = source.workspaceName;
+        this.placerUUID = source.placerUUID;
         this.sizeX = source.sizeX;
         this.sizeY = source.sizeY;
         this.sizeZ = source.sizeZ;
@@ -403,6 +405,7 @@ public class WorkspaceControllerBlockEntity extends BlockEntity {
                 setPlayerPermission(playerName, WorkspacePermission.TIME_CONTROL, true);
                 setPlayerPermission(playerName, WorkspacePermission.VIEW_HISTORY, true);
                 setPlayerPermission(playerName, WorkspacePermission.CHAT, true);
+                setPlayerPermission(playerName, WorkspacePermission.REVERT, true);
             }
         }
     }

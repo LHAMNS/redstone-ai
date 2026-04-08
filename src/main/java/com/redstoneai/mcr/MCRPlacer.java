@@ -51,7 +51,11 @@ public final class MCRPlacer {
                                 continue;
                             }
                             level.setBlock(fillPos, fillState, 3);
-                            placed++;
+                            if (placementSatisfied(level.getBlockState(fillPos), fillState, mcr)) {
+                                placed++;
+                            } else {
+                                skipped++;
+                            }
                         }
                     }
                 }
@@ -72,7 +76,11 @@ public final class MCRPlacer {
             }
 
             level.setBlock(worldPos, state, 3);
-            placed++;
+            if (placementSatisfied(level.getBlockState(worldPos), state, mcr)) {
+                placed++;
+            } else {
+                skipped++;
+            }
         }
 
         return new PlaceResult(placed, skipped);
@@ -128,5 +136,34 @@ public final class MCRPlacer {
             }
         }
         return state;
+    }
+
+    private static boolean placementSatisfied(BlockState actual, BlockState requestedState, MCRBlock mcr) {
+        if (!actual.is(requestedState.getBlock())) {
+            return false;
+        }
+        if (mcr.facing() != null) {
+            if (requestedState.hasProperty(BlockStateProperties.FACING)
+                    && !actual.getValue(BlockStateProperties.FACING).equals(requestedState.getValue(BlockStateProperties.FACING))) {
+                return false;
+            }
+            if (requestedState.hasProperty(BlockStateProperties.HORIZONTAL_FACING)
+                    && !actual.getValue(BlockStateProperties.HORIZONTAL_FACING).equals(requestedState.getValue(BlockStateProperties.HORIZONTAL_FACING))) {
+                return false;
+            }
+            if (requestedState.hasProperty(BlockStateProperties.ATTACH_FACE)
+                    && !actual.getValue(BlockStateProperties.ATTACH_FACE).equals(requestedState.getValue(BlockStateProperties.ATTACH_FACE))) {
+                return false;
+            }
+        }
+        if (mcr.delay() > 0 && requestedState.hasProperty(BlockStateProperties.DELAY)
+                && !actual.getValue(BlockStateProperties.DELAY).equals(requestedState.getValue(BlockStateProperties.DELAY))) {
+            return false;
+        }
+        if (mcr.mode() != null && requestedState.hasProperty(BlockStateProperties.MODE_COMPARATOR)
+                && !actual.getValue(BlockStateProperties.MODE_COMPARATOR).equals(requestedState.getValue(BlockStateProperties.MODE_COMPARATOR))) {
+            return false;
+        }
+        return true;
     }
 }

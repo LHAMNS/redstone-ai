@@ -31,7 +31,8 @@ public abstract class CommandProtectionDataMixin {
 
         if (self instanceof EntityDataAccessor entityAccessor) {
             Entity entity = ((EntityDataAccessorMixin) entityAccessor).redstoneai$getEntity();
-            if (WorkspaceAccessControl.findFrozenWorkspaceForEntity(entity) != null) {
+            var workspace = WorkspaceAccessControl.findWorkspaceForEntity(entity);
+            if (workspace != null && !workspace.isAllowVanillaCommands()) {
                 ci.cancel();
             }
         }

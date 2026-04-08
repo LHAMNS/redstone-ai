@@ -11,6 +11,7 @@ import com.redstoneai.tick.TickController;
 import com.redstoneai.workspace.Workspace;
 import com.redstoneai.workspace.WorkspaceManager;
 import com.redstoneai.workspace.WorkspaceRules;
+import com.redstoneai.workspace.WorkspaceTemporalState;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 
@@ -52,10 +53,20 @@ public class SimulationHandler {
         enforceAiMutationAllowed(ws, "step");
         ServerLevel level = server.overworld();
         if (!ws.isFrozen()) throw new JsonRpcException(-32602, "Must be frozen to step");
+        if (!ws.getTemporalState().canStep()) {
+            throw new JsonRpcException(-32602,
+                    "Cannot step while workspace is " + ws.getTemporalState().getSerializedName() + "; fast-forward to head or revert first");
+        }
 
         int count = req.getIntParam("count", 1);
         if (!WorkspaceRules.isValidTickCount(count)) throw new JsonRpcException(-32602, "Count exceeds configured maximum");
-        int stepped = TickController.step(level, ws, count);
+        final int stepped;
+        try {
+            stepped = TickController.step(level, ws, count);
+        } catch (IllegalStateException e) {
+            throw new JsonRpcException(JsonRpcException.INTERNAL_ERROR,
+                    "Virtual step failed and workspace entered corrupted temporal state; revert is required");
+        }
 
         JsonObject result = new JsonObject();
         result.addProperty("stepped", stepped);
@@ -70,6 +81,9 @@ public class SimulationHandler {
         enforceAiMutationAllowed(ws, "rewind");
         ServerLevel level = server.overworld();
         if (!ws.isFrozen()) throw new JsonRpcException(-32602, "Must be frozen");
+        if (ws.getTemporalState() == WorkspaceTemporalState.FROZEN_CORRUPTED) {
+            throw new JsonRpcException(-32602, "Workspace temporal state is corrupted; revert is required");
+        }
 
         RecordingTimeline timeline = ws.getTimeline();
         if (timeline == null) throw new JsonRpcException(-32602, "No recording");
@@ -92,13 +106,42 @@ public class SimulationHandler {
         enforceAiMutationAllowed(ws, "fast-forward");
         ServerLevel level = server.overworld();
         if (!ws.isFrozen()) throw new JsonRpcException(-32602, "Must be frozen");
+        if (ws.getTemporalState() == WorkspaceTemporalState.FROZEN_CORRUPTED) {
+            throw new JsonRpcException(-32602, "Workspace temporal state is corrupted; revert is required");
+        }
 
         int count = req.getIntParam("count", 1);
         if (!WorkspaceRules.isValidTickCount(count)) throw new JsonRpcException(-32602, "Count exceeds configured maximum");
+        RecordingTimeline timeline = ws.getTimeline();
+        if (timeline == null) {
+            throw new JsonRpcException(-32602, "No recording");
+        }
+        int availableFuture = Math.max(0, timeline.getLength() - (timeline.getCurrentIndex() + 1));
+        if (count > availableFuture) {
+            throw new JsonRpcException(-32602,
+                    "Cannot fast-forward " + count + " ticks; only " + availableFuture + " future tick(s) are recorded");
+        }
 
-        int advanced = TickController.replayThenStep(level, ws, count);
+        int advanced = TickController.fastForward(level, ws, count);
         JsonObject result = new JsonObject();
         result.addProperty("advanced", advanced);
+        result.addProperty("virtualTick", ws.getVirtualTick());
+        return result;
+    }
+
+    public JsonElement discardFuture(JsonRpcRequest req, MinecraftServer server) throws JsonRpcException {
+        Workspace ws = getWorkspace(req, server);
+        requireApiOwned(ws);
+        enforceAiMutationAllowed(ws, "discard-future");
+        ServerLevel level = server.overworld();
+        if (ws.getTemporalState() != com.redstoneai.workspace.WorkspaceTemporalState.FROZEN_REWOUND) {
+            throw new JsonRpcException(-32602, "Can only discard future when in FROZEN_REWOUND state (current: " + ws.getTemporalState() + ")");
+        }
+
+        TickController.discardFuture(level, ws);
+
+        JsonObject result = new JsonObject();
+        result.addProperty("temporalState", ws.getTemporalState().getSerializedName());
         result.addProperty("virtualTick", ws.getVirtualTick());
         return result;
     }
@@ -139,6 +182,10 @@ public class SimulationHandler {
         if (!ws.isFrozen()) {
             throw new JsonRpcException(-32602, "Must be frozen to settle");
         }
+        if (!ws.getTemporalState().canSettle()) {
+            throw new JsonRpcException(-32602,
+                    "Cannot settle while workspace is " + ws.getTemporalState().getSerializedName() + "; fast-forward to head or revert first");
+        }
 
         int maxTicks = req.getIntParam("count", 20);
         int quietTicks = Math.max(1, req.getIntParam("quietTicks", 2));
@@ -152,7 +199,12 @@ public class SimulationHandler {
         int stepped = 0;
         int stableTicks = 0;
         while (stepped < maxTicks) {
-            TickController.step(level, ws, 1);
+            try {
+                TickController.step(level, ws, 1);
+            } catch (IllegalStateException e) {
+                throw new JsonRpcException(JsonRpcException.INTERNAL_ERROR,
+                        "Settle aborted because a virtual step failed and the workspace entered corrupted temporal state");
+            }
             stepped++;
 
             RecordingTimeline timeline = ws.getTimeline();
@@ -176,6 +228,8 @@ public class SimulationHandler {
         result.addProperty("stable", stableTicks >= quietTicks);
         result.addProperty("quietTicks", quietTicks);
         result.addProperty("virtualTick", ws.getVirtualTick());
+        result.addProperty("temporalState", ws.getTemporalState().getSerializedName());
+        result.addProperty("lastMutationSource", ws.getLastMutationSource().getSerializedName());
         result.addProperty("summary", RecordingSummarizer.level1(ws));
         return result;
     }

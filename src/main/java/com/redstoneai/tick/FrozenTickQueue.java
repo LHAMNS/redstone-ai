@@ -1,11 +1,17 @@
 package com.redstoneai.tick;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.BlockEventData;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.ticks.TickPriority;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtUtils;
+import net.minecraft.nbt.Tag;
+import net.minecraft.resources.ResourceLocation;
 
 import java.util.*;
 
@@ -235,5 +241,156 @@ public class FrozenTickQueue {
     public boolean isEmpty() {
         return blockTicks.isEmpty() && fluidTicks.isEmpty()
                 && blockEvents.isEmpty() && neighborUpdates.isEmpty();
+    }
+
+    public static CompoundTag saveQueueState(QueueState state) {
+        CompoundTag tag = new CompoundTag();
+
+        ListTag blockTickList = new ListTag();
+        for (DelayedTickView<Block> tick : state.blockTicks()) {
+            CompoundTag tickTag = new CompoundTag();
+            tickTag.putIntArray("pos", posArray(tick.pos()));
+            tickTag.putString("block", BuiltInRegistries.BLOCK.getKey(tick.type()).toString());
+            tickTag.putInt("remainingDelay", tick.remainingDelay());
+            tickTag.putString("priority", tick.priority().name());
+            tickTag.putLong("order", tick.order());
+            blockTickList.add(tickTag);
+        }
+        tag.put("blockTicks", blockTickList);
+
+        ListTag fluidTickList = new ListTag();
+        for (DelayedTickView<Fluid> tick : state.fluidTicks()) {
+            CompoundTag tickTag = new CompoundTag();
+            tickTag.putIntArray("pos", posArray(tick.pos()));
+            tickTag.putString("fluid", BuiltInRegistries.FLUID.getKey(tick.type()).toString());
+            tickTag.putInt("remainingDelay", tick.remainingDelay());
+            tickTag.putString("priority", tick.priority().name());
+            tickTag.putLong("order", tick.order());
+            fluidTickList.add(tickTag);
+        }
+        tag.put("fluidTicks", fluidTickList);
+
+        ListTag eventList = new ListTag();
+        for (DelayedBlockEventView event : state.blockEvents()) {
+            CompoundTag eventTag = new CompoundTag();
+            eventTag.putIntArray("pos", posArray(event.event().pos()));
+            eventTag.putString("block", BuiltInRegistries.BLOCK.getKey(event.event().block()).toString());
+            eventTag.putInt("paramA", event.event().paramA());
+            eventTag.putInt("paramB", event.event().paramB());
+            eventTag.putInt("remainingDelay", event.remainingDelay());
+            eventTag.putLong("order", event.order());
+            eventList.add(eventTag);
+        }
+        tag.put("blockEvents", eventList);
+
+        ListTag neighborList = new ListTag();
+        for (QueuedNeighborUpdate update : state.neighborUpdates()) {
+            CompoundTag updateTag = new CompoundTag();
+            updateTag.putIntArray("pos", posArray(update.pos()));
+            updateTag.put("state", NbtUtils.writeBlockState(update.state()));
+            updateTag.putString("sourceBlock", BuiltInRegistries.BLOCK.getKey(update.sourceBlock()).toString());
+            updateTag.putIntArray("sourcePos", posArray(update.sourcePos()));
+            updateTag.putBoolean("movedByPiston", update.movedByPiston());
+            neighborList.add(updateTag);
+        }
+        tag.put("neighborUpdates", neighborList);
+
+        return tag;
+    }
+
+    public static QueueState loadQueueState(CompoundTag tag) {
+        List<DelayedTickView<Block>> blockTicks = new ArrayList<>();
+        ListTag blockTickList = tag.getList("blockTicks", Tag.TAG_COMPOUND);
+        for (int i = 0; i < blockTickList.size(); i++) {
+            CompoundTag tickTag = blockTickList.getCompound(i);
+            BlockPos pos = readPos(tickTag, "pos");
+            Block block = resolveBlock(tickTag.getString("block"));
+            blockTicks.add(new DelayedTickView<>(
+                    pos,
+                    block,
+                    tickTag.getInt("remainingDelay"),
+                    TickPriority.valueOf(tickTag.getString("priority")),
+                    tickTag.getLong("order")
+            ));
+        }
+
+        List<DelayedTickView<Fluid>> fluidTicks = new ArrayList<>();
+        ListTag fluidTickList = tag.getList("fluidTicks", Tag.TAG_COMPOUND);
+        for (int i = 0; i < fluidTickList.size(); i++) {
+            CompoundTag tickTag = fluidTickList.getCompound(i);
+            BlockPos pos = readPos(tickTag, "pos");
+            Fluid fluid = resolveFluid(tickTag.getString("fluid"));
+            fluidTicks.add(new DelayedTickView<>(
+                    pos,
+                    fluid,
+                    tickTag.getInt("remainingDelay"),
+                    TickPriority.valueOf(tickTag.getString("priority")),
+                    tickTag.getLong("order")
+            ));
+        }
+
+        List<DelayedBlockEventView> blockEvents = new ArrayList<>();
+        ListTag eventList = tag.getList("blockEvents", Tag.TAG_COMPOUND);
+        for (int i = 0; i < eventList.size(); i++) {
+            CompoundTag eventTag = eventList.getCompound(i);
+            BlockPos pos = readPos(eventTag, "pos");
+            Block block = resolveBlock(eventTag.getString("block"));
+            BlockEventData event = new BlockEventData(pos, block, eventTag.getInt("paramA"), eventTag.getInt("paramB"));
+            blockEvents.add(new DelayedBlockEventView(
+                    event,
+                    eventTag.getInt("remainingDelay"),
+                    eventTag.getLong("order")
+            ));
+        }
+
+        List<QueuedNeighborUpdate> neighborUpdates = new ArrayList<>();
+        ListTag neighborList = tag.getList("neighborUpdates", Tag.TAG_COMPOUND);
+        for (int i = 0; i < neighborList.size(); i++) {
+            CompoundTag updateTag = neighborList.getCompound(i);
+            neighborUpdates.add(new QueuedNeighborUpdate(
+                    readPos(updateTag, "pos"),
+                    NbtUtils.readBlockState(BuiltInRegistries.BLOCK.asLookup(), updateTag.getCompound("state")),
+                    resolveBlock(updateTag.getString("sourceBlock")),
+                    readPos(updateTag, "sourcePos"),
+                    updateTag.getBoolean("movedByPiston")
+            ));
+        }
+
+        return new QueueState(
+                List.copyOf(blockTicks),
+                List.copyOf(fluidTicks),
+                List.copyOf(blockEvents),
+                List.copyOf(neighborUpdates)
+        );
+    }
+
+    private static int[] posArray(BlockPos pos) {
+        return new int[]{pos.getX(), pos.getY(), pos.getZ()};
+    }
+
+    private static BlockPos readPos(CompoundTag tag, String key) {
+        int[] pos = tag.getIntArray(key);
+        if (pos.length < 3) {
+            throw new IllegalStateException("Corrupted queue state: " + key + " is missing coordinates");
+        }
+        return new BlockPos(pos[0], pos[1], pos[2]);
+    }
+
+    private static Block resolveBlock(String id) {
+        ResourceLocation key = ResourceLocation.tryParse(id);
+        if (key == null) {
+            throw new IllegalStateException("Corrupted queue state: invalid block id '" + id + "'");
+        }
+        return BuiltInRegistries.BLOCK.getOptional(key)
+                .orElseThrow(() -> new IllegalStateException("Corrupted queue state: unknown block '" + id + "'"));
+    }
+
+    private static Fluid resolveFluid(String id) {
+        ResourceLocation key = ResourceLocation.tryParse(id);
+        if (key == null) {
+            throw new IllegalStateException("Corrupted queue state: invalid fluid id '" + id + "'");
+        }
+        return BuiltInRegistries.FLUID.getOptional(key)
+                .orElseThrow(() -> new IllegalStateException("Corrupted queue state: unknown fluid '" + id + "'"));
     }
 }

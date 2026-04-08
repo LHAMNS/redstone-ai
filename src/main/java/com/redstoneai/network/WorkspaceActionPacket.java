@@ -1,6 +1,7 @@
 package com.redstoneai.network;
 
 import com.redstoneai.config.RAIConfig;
+import com.redstoneai.recording.RecordingTimeline;
 import com.redstoneai.tick.TickController;
 import com.redstoneai.workspace.*;
 import com.redstoneai.workspace.SelectionManager;
@@ -226,7 +227,7 @@ public class WorkspaceActionPacket {
         manager.updateWorkspaceGeometry(workspace, newBounds, null, WorkspaceRules.originFromBounds(newBounds));
         controller.setInitialSnapshot(InitialSnapshot.capture(level, newBounds));
         workspace.retainIOMarkers(marker -> workspace.contains(marker.pos()));
-        TickController.invalidateRecording(level, workspace);
+        TickController.invalidateRecording(level, workspace, WorkspaceMutationSource.CONFIG);
         controller.getOperationLog().logPlayer("config", "Workspace resized to " + sizeX + "x" + sizeY + "x" + sizeZ);
     }
 
@@ -280,50 +281,16 @@ public class WorkspaceActionPacket {
 
     private void handleRevert(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
         Workspace workspace = getBoundWorkspace(level, controller);
-        if (workspace == null || !WorkspaceAccessControl.canPlayerManageSettings(player, workspace)) {
+        if (workspace == null || !WorkspaceAccessControl.canPlayerRevert(player, workspace)) {
             return;
         }
-
-        boolean wasFrozen = workspace.isFrozen();
 
         InitialSnapshot snapshot = controller.getInitialSnapshot();
         if (snapshot == null) {
             return;
         }
-
-        BoundingBox previousBounds = workspace.getBounds();
-        BlockPos previousOrigin = workspace.getOriginPos();
-        int changed = snapshot.restore(level);
-        BlockPos restoredControllerPos = snapshot.getControllerPos() != null ? snapshot.getControllerPos() : controllerPos;
-        WorkspaceControllerBlockEntity restoredController = level.getBlockEntity(restoredControllerPos) instanceof WorkspaceControllerBlockEntity be
-                ? be
-                : controller;
-
-        if (wasFrozen) {
-            TickController.discardFrozenState(level, workspace, previousBounds, previousOrigin);
-        } else {
-            TickController.removeQueue(workspace.getId());
-        }
-
-        WorkspaceManager manager = WorkspaceManager.get(level);
-        manager.updateWorkspaceGeometry(
-                workspace,
-                snapshot.getBounds(),
-                restoredControllerPos,
-                WorkspaceRules.originFromBounds(snapshot.getBounds())
-        );
-        workspace.setTimeline(null);
-        workspace.setVirtualTick(0);
-        workspace.setProtectionMode(restoredController.getProtectionMode());
-        workspace.setEntityFilterMode(restoredController.getEntityFilterMode());
-        workspace.replaceAuthorizedPlayers(restoredController.getAuthorizedPlayers());
-        workspace.replacePlayerPermissionGrants(restoredController.getPlayerPermissionGrants());
-        workspace.setAllowVanillaCommands(restoredController.isAllowVanillaCommands());
-        workspace.setAllowFrozenEntityTeleport(restoredController.isAllowFrozenEntityTeleport());
-        workspace.setAllowFrozenEntityDamage(restoredController.isAllowFrozenEntityDamage());
-        workspace.setAllowFrozenEntityCollision(restoredController.isAllowFrozenEntityCollision());
-        restoredController.setInitialSnapshot(snapshot);
-        restoredController.getOperationLog().logPlayer("revert", "Reverted " + changed + " blocks");
+        WorkspaceRevertService.Result result = WorkspaceRevertService.revert(level, workspace, controller, snapshot);
+        result.restoredController().getOperationLog().logPlayer("revert", "Reverted " + result.changedBlocks() + " blocks");
     }
 
     private void handleSendChat(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
@@ -362,7 +329,10 @@ public class WorkspaceActionPacket {
 
     private void handleStep(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
         Workspace workspace = getBoundWorkspace(level, controller);
-        if (workspace != null && WorkspaceAccessControl.canPlayerUseTimeControls(player, workspace) && workspace.isFrozen()) {
+        if (workspace != null
+                && WorkspaceAccessControl.canPlayerUseTimeControls(player, workspace)
+                && workspace.isFrozen()
+                && workspace.getTemporalState().canStep()) {
             int count = Math.max(1, Math.min(sizeX, RAIConfig.SERVER.maxStepsPerCall.get()));
             int stepped = TickController.step(level, workspace, count);
             controller.getOperationLog().logPlayer("step", stepped + " tick(s)");
@@ -372,6 +342,9 @@ public class WorkspaceActionPacket {
     private void handleRewind(ServerPlayer player, ServerLevel level, WorkspaceControllerBlockEntity controller) {
         Workspace workspace = getBoundWorkspace(level, controller);
         if (workspace == null || !WorkspaceAccessControl.canPlayerUseTimeControls(player, workspace) || !workspace.isFrozen()) {
+            return;
+        }
+        if (workspace.getTemporalState() == WorkspaceTemporalState.FROZEN_CORRUPTED) {
             return;
         }
         if (workspace.getTimeline() == null) {
@@ -390,9 +363,20 @@ public class WorkspaceActionPacket {
         if (workspace == null || !WorkspaceAccessControl.canPlayerUseTimeControls(player, workspace) || !workspace.isFrozen()) {
             return;
         }
+        if (workspace.getTemporalState() == WorkspaceTemporalState.FROZEN_CORRUPTED) {
+            return;
+        }
 
         int count = Math.max(1, Math.min(sizeX, RAIConfig.SERVER.maxStepsPerCall.get()));
-        int advanced = TickController.replayThenStep(level, workspace, count);
+        RecordingTimeline timeline = workspace.getTimeline();
+        if (timeline == null) {
+            return;
+        }
+        int availableFuture = Math.max(0, timeline.getLength() - (timeline.getCurrentIndex() + 1));
+        if (count > availableFuture) {
+            return;
+        }
+        int advanced = TickController.fastForward(level, workspace, count);
         controller.getOperationLog().logPlayer("ff", advanced + " tick(s)");
     }
 
@@ -454,7 +438,7 @@ public class WorkspaceActionPacket {
         workspace.setEntityFilterMode(mode);
         controller.setEntityFilterMode(mode);
         WorkspaceManager.get(level).setDirty();
-        TickController.invalidateRecording(level, workspace);
+        TickController.invalidateRecording(level, workspace, WorkspaceMutationSource.CONFIG);
         controller.getOperationLog().logPlayer("config", "Entity filter set to " + mode.getSerializedName());
     }
 
@@ -580,7 +564,7 @@ public class WorkspaceActionPacket {
             return;
         }
 
-        if (!WorkspaceRules.canPlayerManage(player, workspace) || workspace.isFrozen()) {
+        if (!WorkspaceAccessControl.canPlayerManageSettings(player, workspace) || workspace.isFrozen()) {
             return;
         }
 

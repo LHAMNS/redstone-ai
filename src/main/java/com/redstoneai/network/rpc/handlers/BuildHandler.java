@@ -34,7 +34,7 @@ public class BuildHandler {
         try {
             List<MCRBlock> blocks = MCRParser.parse(mcr);
             MCRPlacer.PlaceResult result = MCRPlacer.place(level, workspace, blocks);
-            TickController.invalidateRecording(level, workspace);
+            TickController.invalidateRecording(level, workspace, com.redstoneai.workspace.WorkspaceMutationSource.BUILD);
 
             JsonObject response = new JsonObject();
             response.addProperty("placed", result.placed());
@@ -69,17 +69,28 @@ public class BuildHandler {
         }
 
         BlockState state = block.defaultBlockState();
+        JsonObject requestedProperties = null;
         if (req.params() != null && req.params().has("properties")) {
-            state = applyRequestedProperties(state, req.params().get("properties"));
+            if (!req.params().get("properties").isJsonObject()) {
+                throw new JsonRpcException(JsonRpcException.INVALID_PARAMS, "properties must be a JSON object");
+            }
+            requestedProperties = req.params().getAsJsonObject("properties");
+            state = applyRequestedProperties(state, requestedProperties);
         }
-        level.setBlock(worldPos, state, 3);
-        TickController.invalidateRecording(level, workspace);
+        boolean changed = level.setBlock(worldPos, state, 3);
+        BlockState actual = level.getBlockState(worldPos);
+        if (!placementSatisfied(actual, state, requestedProperties)) {
+            throw new JsonRpcException(JsonRpcException.INVALID_PARAMS,
+                    "Block placement did not persist with the requested state at " + x + "," + y + "," + z);
+        }
+        TickController.invalidateRecording(level, workspace, com.redstoneai.workspace.WorkspaceMutationSource.BUILD);
 
         JsonObject result = new JsonObject();
         result.addProperty("placed", blockId);
         result.addProperty("x", x);
         result.addProperty("y", y);
         result.addProperty("z", z);
+        result.addProperty("changed", changed);
         return result;
     }
 
@@ -121,6 +132,25 @@ public class BuildHandler {
             updated = applyPropertyValue(updated, property, entry.getValue().getAsString());
         }
         return updated;
+    }
+
+    private boolean placementSatisfied(BlockState actual, BlockState requestedState, JsonObject requestedProperties) {
+        if (!actual.is(requestedState.getBlock())) {
+            return false;
+        }
+        if (requestedProperties == null) {
+            return true;
+        }
+        for (String propertyName : requestedProperties.keySet()) {
+            Property<?> property = actual.getBlock().getStateDefinition().getProperty(propertyName);
+            if (property == null) {
+                return false;
+            }
+            if (!actual.getValue(property).equals(requestedState.getValue(property))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})

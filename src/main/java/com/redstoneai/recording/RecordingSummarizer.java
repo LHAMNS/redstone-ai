@@ -81,6 +81,9 @@ public final class RecordingSummarizer {
         // Only show ticks up to the current rewind position, not future deltas
         int maxVisible = timeline.getCurrentIndex();
         int end = toTick < 0 ? maxVisible : Math.min(toTick, maxVisible);
+        if (start > end) {
+            return "No visible ticks in selected range.";
+        }
 
         // Limit width to 64 ticks for readability
         if (end - start > 63) end = start + 63;
@@ -136,6 +139,9 @@ public final class RecordingSummarizer {
         int start = Math.max(0, fromTick);
         int maxVisible = timeline.getCurrentIndex();
         int end = toTick < 0 ? maxVisible : Math.min(toTick, maxVisible);
+        if (start > end) {
+            return "No visible ticks in selected range.";
+        }
 
         // Limit to 20 ticks per call for token budget
         if (end - start > 19) end = start + 19;

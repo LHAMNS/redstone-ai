@@ -81,6 +81,8 @@ public class RAINetwork {
             boolean frozen,
             int virtualTick,
             int recordingLength,
+            String temporalState,
+            String lastMutationSource,
             String protectionMode,
             String entityFilterMode,
             String authorizedPlayers,
@@ -115,6 +117,8 @@ public class RAINetwork {
             buf.writeBoolean(frozen);
             buf.writeInt(virtualTick);
             buf.writeInt(recordingLength);
+            buf.writeUtf(temporalState, 64);
+            buf.writeUtf(lastMutationSource, 64);
             buf.writeUtf(protectionMode, 64);
             buf.writeUtf(entityFilterMode, 64);
             buf.writeUtf(authorizedPlayers, 512);
@@ -159,6 +163,8 @@ public class RAINetwork {
             boolean frozen = buf.readBoolean();
             int virtualTick = buf.readInt();
             int recordingLength = buf.readInt();
+            String temporalState = buf.readUtf(64);
+            String lastMutationSource = buf.readUtf(64);
             String protectionMode = buf.readUtf(64);
             String entityFilterMode = buf.readUtf(64);
             String authorizedPlayers = buf.readUtf(512);
@@ -222,6 +228,8 @@ public class RAINetwork {
                     frozen,
                     virtualTick,
                     recordingLength,
+                    temporalState,
+                    lastMutationSource,
                     protectionMode,
                     entityFilterMode,
                     authorizedPlayers,
